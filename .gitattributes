@@ -1,0 +1,26 @@
+# Normalize text to LF in the repo, keep working-tree files as-is on checkout.
+* text=auto
+
+# Never touch these as text
+*.pdf   binary
+*.zip   binary
+*.gguf  binary
+*.onnx  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+
+# Markdown / python / config are text
+*.md    text
+*.py    text
+*.toml  text
+*.yaml  text
+*.yml   text
+*.json  text
+*.jsonc  text
+*.sql   text
+*.html  text
+*.css   text
+*.js    text

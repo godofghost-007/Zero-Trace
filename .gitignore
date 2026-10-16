@@ -1,0 +1,47 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets / environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Model weights and runtime assets (kept outside the repo or downloaded by script)
+models/*.gguf
+models/*.onnx
+models/*.bin
+*.gguf
+
+# Databases / audit data / volumes
+*.sqlite
+*.sqlite3
+*.db
+data/
+audit/
+volumes/
+
+# Node (dashboard tooling, if any)
+node_modules/
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# Local scratch
+tmp/
+scratch/
+*.log

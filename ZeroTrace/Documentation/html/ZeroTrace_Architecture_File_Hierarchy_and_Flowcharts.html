@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZeroTrace: Complete Architecture, File Hierarchy & Flowcharts (v2.0)</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>mermaid.initialize({startOnLoad:true, theme: 'dark'});</script>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --border-color: #30363d;
+            --text-color: #c9d1d9;
+            --accent-color: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-gold: #d29922;
+            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: var(--font-family);
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        h1, h2, h3, h4 {
+            color: #ffffff;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+            margin-top: 32px;
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            color: var(--accent-color);
+            border-bottom: 2px solid var(--accent-color);
+        }
+
+        h2 {
+            font-size: 1.6rem;
+            color: var(--accent-green);
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent-color);
+            border: 1px solid var(--accent-color);
+            margin-right: 8px;
+        }
+
+        .badge-new {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+            border-color: var(--accent-green);
+        }
+
+        pre, code {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+        }
+
+        pre {
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+
+        code {
+            padding: 2px 6px;
+            font-size: 0.9em;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: var(--card-bg);
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: #ffffff;
+        }
+
+        .mermaid {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .formula-box {
+            background: rgba(210, 153, 34, 0.1);
+            border: 1px solid var(--accent-gold);
+            padding: 16px;
+            border-radius: 8px;
+            color: var(--accent-gold);
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        .footer {
+            margin-top: 60px;
+            text-align: center;
+            color: #8b949e;
+            font-size: 0.9rem;
+            border-top: 1px solid var(--border-color);
+            padding-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ZEROTRACE: UNIFIED SYSTEM ARCHITECTURE & FILE HIERARCHY</h1>
+        <p>
+            <span class="badge badge-new">Version 2.0 (Updated)</span>
+            <span class="badge">Author: Aniruddh Gupta</span>
+            <span class="badge">Target: Single Laptop (16GB RAM)</span>
+            <span class="badge">Year: 2026</span>
+        </p>
+
+        <p><em>"They leave no trace. Because we found them first."</em></p>
+
+        <h2>1. Executive Summary & Philosophy</h2>
+        <p>
+            <strong>ZeroTrace</strong> is an open-source, zero-cost, CPU-optimized cyber defense platform combining three modular traces into a single source of truth:
+        </p>
+        <ul>
+            <li><strong>Trace 1 (RECON)</strong>: Attack Surface Discovery (Subdomains, Ports, S3 buckets, SSL expiry, Shadow IT).</li>
+            <li><strong>Trace 2 (INTEL)</strong>: AI-Powered Vulnerability Prioritization (NVD + EPSS, XGBoost Exploit Model, Ollama Auto-Fix).</li>
+            <li><strong>Trace 3 (GUARD)</strong>: LLM Security Middleware Gateway (Regex pre-filter, ONNX DistilBERT classifier, PII scanner, Hash-chained SQLite audit log).</li>
+        </ul>
+
+        <div class="formula-box">
+            Operational Readiness Score (v2.0 Fixed) = 100 - (0.40 × Asset Exposure + 0.40 × Vuln Urgency + 0.20 × AI Threat Exposure Index)
+        </div>
+
+        <h2>2. Complete File Hierarchy v2.0</h2>
+        <pre>zerotrace/
+├── docker-compose.yml              # Multi-container orchestration (DB, Redis, API, Dashboard, Ollama)
+├── Dockerfile.api                  # Docker build file for FastAPI backend engine
+├── Dockerfile.dashboard            # Docker build file for Flask/HTMX dashboard
+├── .env.example                    # Environment variable templates (DB credentials, API keys, JWT secrets)
+├── .gitignore                      # Exclude bytecode, ONNX weights, local SQLite DB, logs, .env
+├── Makefile                        # Dev commands (make run, make test, make db-migrate, make clean)
+├── requirements.txt                # Python dependencies (FastAPI, Flask, SQLAlchemy, XGBoost, ONNX, python-jose, etc.)
+├── README.md                       # Comprehensive project setup and execution manual
+│
+├── config/                         # Configuration Management System
+│   ├── __init__.py
+│   ├── settings.py                 # Pydantic BaseSettings loading .env config
+│   ├── logging_config.py           # Structured JSON logging configuration
+│   └── database.py                 # SQLAlchemy async engine, session maker, Redis client init
+│
+├── db/                             # Relational Data Layer (PostgreSQL & Alembic)
+│   ├── alembic.ini                 # Database migration configuration
+│   ├── migrations/                 # Alembic migration scripts directory
+│   │   ├── env.py
+│   │   └── versions/
+│   │       └── 0001_initial_schema.py
+│   └── models/                     # SQLAlchemy ORM Data Models
+│       ├── __init__.py
+│       ├── asset.py                # Asset table (IP, Hostname, Ports, Services, S3, SSL, Shadow IT flag)
+│       ├── vulnerability.py        # CVE, CVSS, EPSS score, ML Exploit Score, Patch Status
+│       ├── llm_audit.py            # Guard proxy request records (Prompt hash, score, blocked flag, chain hash)
+│       ├── readiness.py            # Historical Operational Readiness Score snapshots
+│       └── user.py                 # User authentication model (Username, bcrypt password hash, RBAC role) [NEW v2.0]
+│
+├── auth/                           # Authentication & Authorization Subsystem [NEW v2.0]
+│   ├── __init__.py
+│   ├── jwt_handler.py              # JWT token creation, decoding, validation, and refresh logic
+│   ├── session_manager.py          # Flask-Login session authentication manager
+│   ├── rbac.py                     # Role-Based Access Control decorator (Viewer, Operator, Admin)
+│   └── password_utils.py           # Bcrypt hashing & verification utilities
+│
+├── modules/                        # Core Domain Logic (Three Traces)
+│   ├── __init__.py
+│   │
+│   ├── recon/                      # TRACE 1: RECON MODULE (Attack Surface Discovery)
+│   │   ├── __init__.py
+│   │   ├── subdomains.py           # Subdomain enumeration engine (subfinder + cert-stream listener)
+│   │   ├── port_scanner.py         # Nmap top-100 port & service banner discovery wrapper
+│   │   ├── s3_checker.py           # AWS S3 public bucket misconfiguration tester
+│   │   ├── ssl_monitor.py          # SSL/TLS certificate expiration & protocol checker
+│   │   ├── shadow_it.py            # Inventory lookup & unauthorized asset flagger
+│   │   └── runner.py               # Orchestrator running full recon workflow async with timeout recovery
+│   │
+│   ├── intel/                      # TRACE 2: INTEL MODULE (Vulnerability Prioritization)
+│   │   ├── __init__.py
+│   │   ├── nvd_feed.py             # NVD API ingestor for CVE vulnerability data (with rate-limit fallback)
+│   │   ├── epss_feed.py            # EPSS (Exploit Prediction Scoring System) daily CSV parser
+│   │   ├── cpe_matcher.py          # Service banner to CPE 2.3 string & CVE mapper
+│   │   ├── ml_scorer.py            # XGBoost ML inference engine for exploit probability scoring
+│   │   ├── patch_queue.py          # 48-hour prioritized remediation queue generator
+│   │   └── autofix_llm.py          # Local Ollama Qwen2.5-Coder prompt builder & code generator (syntax checked)
+│   │
+│   └── guard/                      # TRACE 3: GUARD MODULE (LLM Security Middleware)
+│       ├── __init__.py
+│       ├── proxy.py                # FastAPI reverse proxy endpoint intercepting /v1/chat/completions
+│       ├── regex_filter.py         # Fast zero-latency heuristic & regex rule checker
+│       ├── injection_classifier.py  # ONNX Runtime DistilBERT semantic prompt injection detector (<10ms)
+│       ├── pii_scanner.py          # Outbound response scanner for API keys, SSNs, and credit cards
+│       ├── sqlite_logger.py        # Append-only SHA-256 hash-chained tamper-resistant audit logger
+│       └── rate_limiter.py         # Redis token-bucket rate limiter per client ID
+│
+├── core/                           # Unified System Core Engine
+│   ├── __init__.py
+│   ├── readiness_calculator.py     # Directionally-consistent Operational Readiness Score engine
+│   ├── event_bus.py                # Redis Pub/Sub async event dispatcher (zt:events) [NEW v2.0]
+│   └── redis_cache.py              # High-frequency query caching helper
+│
+├── api/                            # Backend API Service (FastAPI)
+│   ├── __init__.py
+│   ├── main.py                     # FastAPI entrypoint, CORS, security headers, JWT middleware
+│   ├── routers/
+│   │   ├── recon_router.py         # Endpoints for triggering & querying Recon scans
+│   │   ├── intel_router.py         # Endpoints for CVE query, patch queue, auto-fix generation
+│   │   ├── guard_router.py         # Interception proxy + Guard log query endpoints
+│   │   ├── readiness_router.py     # Operational Readiness Score & metrics API
+│   │   └── auth_router.py          # Login, logout, JWT refresh, user management endpoints [NEW v2.0]
+│   └── schemas/                    # Pydantic Request/Response Models
+│       ├── recon_schema.py
+│       ├── intel_schema.py
+│       ├── guard_schema.py
+│       ├── readiness_schema.py
+│       └── auth_schema.py          # LoginRequest, TokenResponse, UserCreate schemas [NEW v2.0]
+│
+├── dashboard/                      # Front-end UI (Flask + HTMX + Alpine.js)
+│   ├── app.py                      # Flask app handling session auth & rendering HTMX partials
+│   ├── static/
+│   │   ├── css/main.css            # Dark-mode cybersecurity UI styling (glassmorphism & cyber glow)
+│   │   ├── js/app.js              # Alpine.js state store & HTMX event handlers
+│   │   └── vendor/                 # Offline vendor packages (No Node.js / npm needed)
+│   │       ├── htmx.min.js         # HTMX 1.9.x (14KB)
+│   │       └── alpine.min.js       # Alpine.js 3.x (15KB)
+│   └── templates/
+│       ├── base.html               # Main HTML layout, head, scripts, navbar
+│       ├── login.html              # CSRF-protected login page [NEW v2.0]
+│       ├── index.html              # Command Center Unified View
+│       └── components/
+│           ├── readiness_gauge.html # Animated SVG score ring (HTMX auto-refresh via event bus)
+│           ├── recon_panel.html    # Discovered assets & open ports table
+│           ├── intel_panel.html    # Prioritized patch queue & auto-fix modal trigger
+│           ├── guard_panel.html    # Real-time LLM attack logs & block counters
+│           └── autofix_modal.html  # Syntax-validated script display
+│
+├── models_weights/                 # Model Artifacts (Downloaded at setup, NOT in Git)
+│   ├── distilbert_injection.onnx   # Quantized DistilBERT model (~65MB)
+│   ├── tokenizer_config.json       # HuggingFace tokenizer configs for DistilBERT
+│   └── xgboost_exploit_model.pkl   # Pre-trained XGBoost exploit classifier weights
+│
+├── scripts/                        # Utility & Setup Automation Scripts
+│   ├── download_models.py          # Script to fetch ONNX model & tokenizer files
+│   ├── seed_database.py            # Populates DB with initial sample asset & threat data
+│   ├── create_admin.py             # Script to create initial admin user [NEW v2.0]
+│   └── start_services.sh           # Docker entrypoint starter script
+│
+└── tests/                          # Automated Test Suite (pytest)
+    ├── conftest.py                 # Test fixtures & database mock setup
+    ├── test_recon.py               # Unit tests for subdomain, nmap, S3, SSL scanners
+    ├── test_intel.py               # Unit tests for CPE matching, XGBoost scoring, Ollama prompt
+    ├── test_guard.py               # Unit tests for Regex filter, ONNX classifier, PII scanner
+    ├── test_readiness.py           # Unit tests for Readiness score formula & monotonicity
+    ├── test_auth.py                # Tests for JWT creation, password hashing, RBAC [NEW v2.0]
+    └── test_integration.py         # End-to-end integration tests [NEW v2.0]</pre>
+
+        <h2>3. Master Architecture Topology</h2>
+        <div class="mermaid">
+        graph TD
+            User([User / Browser UI]) <--> Dashboard[Flask + HTMX + Alpine.js Dashboard]
+            Dashboard <--> BackendAPI[FastAPI Backend Core\nJWT Auth + RBAC]
+            
+            subgraph Data Stores
+                PG[(PostgreSQL 16\nPrimary State)]
+                RedisCache[(Redis/Valkey 7\nCache & Rate Limit)]
+                AuditDB[(SQLite 3\nHash-Chained Log)]
+            end
+            
+            subgraph Trace 1: RECON
+                RECON_EXEC[Recon Orchestrator] --> Subfinder[subfinder / cert-stream]
+                RECON_EXEC --> Nmap[Nmap Port Scanner]
+                RECON_EXEC --> S3[S3 Bucket Tester]
+                RECON_EXEC --> SSL[SSL Expiry Monitor]
+            end
+
+            subgraph Trace 2: INTEL
+                INTEL_EXEC[Intel Engine] --> NVD[NVD API Ingestor]
+                INTEL_EXEC --> EPSS[EPSS Feed Parser]
+                INTEL_EXEC --> XGB[XGBoost Exploit Scorer]
+                INTEL_EXEC --> Ollama[Local Ollama LLM Qwen2.5-Coder]
+            end
+
+            subgraph Trace 3: GUARD
+                ClientApp([External AI App / Client]) --> GuardProxy[Guard FastAPI Reverse Proxy]
+                GuardProxy --> Regex[Zero-Latency Regex Filter]
+                GuardProxy --> ONNX[ONNX DistilBERT Injection Classifier]
+                GuardProxy --> PII[Output PII Scanner]
+            end
+
+            subgraph Unified Engine
+                ORS[Operational Readiness Score Calculator]
+            end
+
+            RECON_EXEC --> PG
+            INTEL_EXEC --> PG
+            GuardProxy --> AuditDB
+            GuardProxy --> RedisCache
+            
+            PG --> ORS
+            RedisCache --> ORS
+            ORS --> Dashboard
+        </div>
+
+        <h2>4. Cross-Module Event Bus Flow (Redis Pub/Sub)</h2>
+        <div class="mermaid">
+        graph LR
+            RECON[Trace 1: RECON] -- asset_created --> EventBus[Redis Event Bus: zt:events]
+            INTEL[Trace 2: INTEL] -- vuln_matched --> EventBus
+            GUARD[Trace 3: GUARD] -- attack_blocked --> EventBus
+            INTEL -- vuln_patched --> EventBus
+            
+            EventBus -- asset_created --> INTEL
+            EventBus -- vuln_matched --> GUARD
+            EventBus -- attack_blocked --> ORS[Readiness Score Engine]
+            EventBus -- vuln_patched --> RECON
+            EventBus -- readiness_update --> UI[Dashboard HTMX Live Gauge]
+        </div>
+
+        <h2>5. Memory Footprint Allocation</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Component / Service</th>
+                    <th>RAM Usage</th>
+                    <th>Status / Optimization</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Windows 11 OS</td><td>~4.0 GB</td><td>Background OS</td></tr>
+                <tr><td>WSL 2 (Ubuntu + Docker)</td><td>~2.0 GB</td><td>Linux Subsystem</td></tr>
+                <tr><td>PostgreSQL 16</td><td>~500 MB</td><td>Primary Relational DB</td></tr>
+                <tr><td>Redis (Valkey 7)</td><td>~300 MB</td><td>Cache, Rate Limiter, Event Bus</td></tr>
+                <tr><td>FastAPI Backend</td><td>~600 MB</td><td>Async API Engine</td></tr>
+                <tr><td>Ollama (Qwen2.5-Coder 7B Q4_K_M)</td><td>~4.5 GB</td><td>Quantized Local LLM</td></tr>
+                <tr><td>ONNX Runtime (DistilBERT)</td><td>~400 MB</td><td>CPU Inference Engine</td></tr>
+                <tr><td>Flask Dashboard</td><td>~200 MB</td><td>Presentation Tier</td></tr>
+                <tr><td><strong>Total Active Memory</strong></td><td><strong>~9.0 GB</strong></td><td><strong>Comfortable on 16GB–20GB RAM</strong></td></tr>
+            </tbody>
+        </table>
+
+        <div class="footer">
+            <p>ZeroTrace Project — Version 2.0 — 2026 | Prepared for Aniruddh Gupta</p>
+        </div>
+    </div>
+</body>
+</html>
