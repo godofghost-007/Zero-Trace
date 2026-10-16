@@ -24,6 +24,8 @@ Never read the raw PDFs or `01 …p1-26.txt` unless auditing a source claim. Nev
 
 ## 3. Always-on behaviors
 
+**Read `CONSTRAINTS.md` before writing code. Do not weaken it to make a change pass.**
+
 These six apply to every task without being loaded as skill files:
 
 | Behavior | Rule |
