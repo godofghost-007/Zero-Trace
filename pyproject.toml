@@ -8,6 +8,7 @@ version = "0.1.0.dev0"
 description = "CPU-oriented cyber-defense platform foundation"
 requires-python = ">=3.13"
 dependencies = [
+    "dnspython>=2.6,<3",
     "fastapi>=0.115,<1",
     "httpx2>=2,<3",
     "psycopg[binary]>=3.2,<4",

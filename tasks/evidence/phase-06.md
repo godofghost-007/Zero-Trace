@@ -33,7 +33,7 @@ not execute remediation.
 | S3 safety boundary | PASS | `test_read_only_s3_adapter_accepts_statuses_but_has_no_write_interface` passed | Public/read/list/denied/unknown/transient statuses only; no write/delete methods |
 | Result persistence before event | PASS | `test_successful_run_normalizes_results_and_publishes_after_commit` passed | Publisher observes committed results |
 | Idempotency | PASS | Duplicate and changed-request idempotency tests passed | Same key replays; changed request is rejected |
-| Full repository tests | PASS | `py -m unittest discover -s tests -v` — 55 tests passed | Includes Phase 0–5 regression coverage and Recon API/persistence tests |
+| Full repository tests | PASS | `py -m unittest discover -s tests -v` — 61 tests passed | Includes Phase 0–5 regression coverage, Recon API/persistence, and authorization tests |
 | Python sources compile | PASS | `py -m compileall -q app scripts` completed successfully | |
 | Compose profiles validate | PASS | Core, full, and dev config returned `core=0 full=0 dev=0` | |
 | Diff has no whitespace errors | PASS | `git diff --check` completed successfully | |
@@ -53,6 +53,9 @@ not execute remediation.
   forward-only Recon schema and constraints.
 - [app/recon_api.py](../../app/recon_api.py) exposes role-checked scan
   submission, polling, cancellation, asset listing, and asset detail routes.
+- [app/recon_authorization.py](../../app/recon_authorization.py) implements
+  exact-domain, single-use DNS TXT challenges, bounded system DNS/allowlisted
+  DoH resolvers, and authorization checks before isolated-lab queueing.
 - API tests use a synthetic adapter and deterministic queue draining; no
   network target is contacted.
 - Python subprocess execution follows the standard-library documented sequence
@@ -76,6 +79,8 @@ not execute remediation.
   separately gated.
 - The HTTP factory accepts the existing validated `Principal` abstraction;
   production identity/session wiring remains an integration boundary.
+- Automated DNS tests use injected synthetic records; no public DNS provider
+  or target was contacted.
 
 ## Decision
 

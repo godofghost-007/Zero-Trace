@@ -109,4 +109,13 @@
 - [ ] Real scanner execution remains blocked until isolated-lab authorization.
 - [ ] Human reviews and signs Phase 6 evidence before Phase 7.
 
+### Scope authorization verification
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P6-AUTH-SPEC | Approve scope-authorization contract | Verified | P6 human signoff |
+| P6-AUTH-CONTRACT | Implement challenge and lab authorization contracts | Verified | P6-AUTH-SPEC |
+| P6-AUTH-INTEGRATION | Enforce authorization before Recon queueing | Verified | P6-AUTH-CONTRACT |
+| P6-AUTH-EVIDENCE | Record authorization verification evidence | Verified | P6-AUTH-INTEGRATION |
+
 Use [tasks/plan.md](plan.md) for acceptance criteria and exact verification.

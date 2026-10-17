@@ -16,6 +16,7 @@ from .recon import (
     Scope,
     Target,
 )
+from .recon_authorization import AuthorizationRegistry, AuthorizationVerificationError
 from .security import AuthorizationError, Principal, require_role
 
 
@@ -25,6 +26,19 @@ class ScanRequest(BaseModel):
     scopeId: str = Field(min_length=1, max_length=128)
     target: str = Field(min_length=1, max_length=253)
     profileId: str = Field(min_length=1, max_length=64)
+
+
+class AuthorizationChallengeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    domain: str = Field(min_length=1, max_length=253)
+
+
+class AuthorizationVerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    challengeId: str = Field(min_length=1, max_length=128)
+    profileIds: tuple[str, ...] = Field(min_length=1, max_length=4)
 
 
 @dataclass
@@ -40,17 +54,24 @@ class _QueuedScan:
 
 class ReconQueue:
     def __init__(
-        self, engine: ReconEngine, repository: InMemoryReconRepository
+        self,
+        engine: ReconEngine,
+        repository: InMemoryReconRepository,
+        authorization_registry: AuthorizationRegistry | None = None,
     ) -> None:
         self.engine = engine
         self.repository = repository
         self._scopes: dict[str, Scope] = {}
+        self._scope_authorizations: dict[str, str] = {}
+        self.authorization_registry = authorization_registry
         self._jobs: dict[str, _QueuedScan] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
         self._lock = threading.Lock()
 
-    def add_scope(self, scope: Scope) -> None:
+    def add_scope(self, scope: Scope, authorization_id: str | None = None) -> None:
         self._scopes[scope.scope_id] = scope
+        if authorization_id is not None:
+            self._scope_authorizations[scope.scope_id] = authorization_id
 
     def enqueue(
         self,
@@ -152,8 +173,59 @@ def create_recon_app(
             raise AuthorizationError("Authorization denied", 403)
         target = Target(payload.target, "domain")
         scope.require_target(target, payload.profileId, datetime.now(timezone.utc))
+        if scope.environment == "isolated_lab":
+            authorization_id = queue._scope_authorizations.get(scope.scope_id)
+            if queue.authorization_registry is None or authorization_id is None:
+                raise AuthorizationError("Authorization denied", 403)
+            try:
+                queue.authorization_registry.authorize(
+                    authorization_id,
+                    owner_id=actor.subject,
+                    target=target.value,
+                    profile_id=payload.profileId,
+                )
+            except AuthorizationVerificationError as error:
+                raise AuthorizationError("Authorization denied", 403) from error
         job = queue.enqueue(scope, target, payload.profileId, idempotency_key)
         return {"scanId": job.scan_id, "state": job.state}
+
+    @app.post("/api/v1/recon/authorizations/challenges", status_code=201)
+    async def create_authorization_challenge(
+        request: Request, payload: AuthorizationChallengeRequest
+    ) -> dict[str, str]:
+        actor = principal(request, "operator")
+        if queue.authorization_registry is None:
+            raise HTTPException(status_code=503, detail="authorization unavailable")
+        challenge = queue.authorization_registry.create_challenge(
+            payload.domain, actor.subject
+        )
+        return {
+            "challengeId": challenge.challenge_id,
+            "recordName": challenge.record_name,
+            "token": challenge.token,
+            "expiresAt": challenge.expires_at.isoformat(),
+        }
+
+    @app.post("/api/v1/recon/authorizations", status_code=201)
+    async def verify_authorization(
+        request: Request, payload: AuthorizationVerifyRequest
+    ) -> dict[str, str]:
+        actor = principal(request, "operator")
+        if queue.authorization_registry is None:
+            raise HTTPException(status_code=503, detail="authorization unavailable")
+        try:
+            authorization = queue.authorization_registry.verify_challenge(
+                payload.challengeId,
+                owner_id=actor.subject,
+                profile_ids=payload.profileIds,
+            )
+        except AuthorizationVerificationError as error:
+            raise AuthorizationError("Authorization denied", 403) from error
+        return {
+            "authorizationId": authorization.authorization_id,
+            "target": authorization.target,
+            "expiresAt": authorization.expires_at.isoformat(),
+        }
 
     @app.get("/api/v1/recon/scans/{scan_id}")
     async def get_scan(request: Request, scan_id: str) -> dict[str, str]:
