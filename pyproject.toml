@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zerotrace"
+version = "0.1.0.dev0"
+description = "CPU-oriented cyber-defense platform foundation"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "httpx2>=2,<3",
+    "psycopg[binary]>=3.2,<4",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"

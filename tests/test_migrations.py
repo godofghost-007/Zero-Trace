@@ -1,0 +1,41 @@
+import unittest
+
+from scripts.run_migrations import migration_files, migration_statements
+
+
+class MigrationTests(unittest.TestCase):
+    def test_foundation_migration_is_idempotent(self) -> None:
+        statements = migration_statements()
+        sql = "\n".join(statements)
+
+        self.assertIn("CREATE TABLE IF NOT EXISTS schema_migrations", sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS event_outbox", sql)
+        self.assertIn("CREATE UNIQUE INDEX IF NOT EXISTS", sql)
+
+    def test_migrations_include_event_reliability_contract(self) -> None:
+        versions = [path.stem for path in migration_files()]
+        sql = "\n".join(migration_statements())
+
+        self.assertEqual(
+            versions,
+            ["0001_foundation", "0002_event_reliability", "0003_recon"],
+        )
+        self.assertIn("processed_events", sql)
+        self.assertIn("dead_letter_reason", sql)
+        self.assertIn("event_outbox_pending_idx", sql)
+        self.assertIn("event_outbox_status_check", sql)
+
+    def test_recon_migration_defines_canonical_state_and_idempotency(self) -> None:
+        sql = "\n".join(migration_statements())
+
+        for table in (
+            "recon_scopes",
+            "recon_runs",
+            "recon_assets",
+            "recon_services",
+            "recon_observations",
+            "recon_idempotency",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("recon_runs_scope_target_profile", sql)
+        self.assertIn("recon_idempotency_key_unique", sql)
