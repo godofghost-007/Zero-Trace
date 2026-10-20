@@ -3,7 +3,7 @@
 ## Completed
 
 | ID | Phase | Task | Status |
-|---|---:|---|---|
+|---|---|---|---|
 | P0-ENV-BASELINE | 0 | Review baseline files and record environment evidence | Verified |
 | P0-DOCKER-BASELINE | 0 | Recheck Docker daemon availability | Verified |
 | P0-DATA-POLICY | 0 | Decide what project data may be sent to hosted Copilot | Verified |
@@ -104,8 +104,7 @@
 - [x] All Phase 6 focused and regression tests pass.
 - [x] Scope, process, network, output, and S3 safety controls are evidenced.
 - [x] No external target was scanned.
-- [x] PostgreSQL schema/repository and FastAPI route contracts are covered by
-      focused tests.
+- [x] PostgreSQL schema/repository and FastAPI route contracts are covered by focused tests.
 - [ ] Real scanner execution remains blocked until isolated-lab authorization.
 - [ ] Human reviews and signs Phase 6 evidence before Phase 7.
 
@@ -117,5 +116,130 @@
 | P6-AUTH-CONTRACT | Implement challenge and lab authorization contracts | Verified | P6-AUTH-SPEC |
 | P6-AUTH-INTEGRATION | Enforce authorization before Recon queueing | Verified | P6-AUTH-CONTRACT |
 | P6-AUTH-EVIDENCE | Record authorization verification evidence | Verified | P6-AUTH-INTEGRATION |
+
+## Phase 7 — Intel boundary
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P7-MODEL | Implement Intel facts, provenance, freshness, and priority formula | done | Phase 6 approval |
+| P7-FEEDS | Implement bounded NVD/EPSS/KEV feed adapters | done | P7-MODEL |
+| P7-DB | Add Intel migration and transactional repository | done | P7-MODEL, P7-FEEDS |
+| P7-CORRELATION | Match Recon services to CVEs and generate findings | done | P7-DB |
+| P7-API | Add Intel ingestion and findings API routes | done | P7-CORRELATION |
+| P7-EVIDENCE | Record Phase 7 evidence and signoff gate | done | P7-API |
+
+### Checkpoint: Phase 7 Intel contract
+
+- [ ] Proposed `intel-priority-v1` formula and weights approved.
+- [ ] Production feed access remains deferred unless separately authorized.
+
+## Phase 0–7 completion hardening
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P5-RUNTIME | Wire PostgreSQL outbox and Redis/Valkey Streams runtime contracts | Verified | P5-EVIDENCE |
+| P6-SAFETY | Enforce Recon rate/concurrency, retry, DNS-gate, and inventory-delta controls | Verified | P6-API |
+| P7-OPERATIONS | Add feed pagination, incremental sync, cache, quarantine, last-known-good, merge, and real pagination | Verified | P7-API |
+| P0-7-INTEGRATION | Wire readiness and deterministic Recon-to-Intel integration harness | Verified | P5-RUNTIME, P6-SAFETY, P7-OPERATIONS |
+| P0-7-EVIDENCE | Reconcile all phase evidence and record exact operational blockers | Verified | P0-7-INTEGRATION |
+
+### Completion contract
+
+- [x] Phase 0–7 criteria are implemented, not only unit-tested.
+- [x] PostgreSQL migrations run twice against a disposable local database, including `0005_recon_inventory`.
+- [x] Valkey pending-message recovery and acknowledgement are exercised with a disposable local service; application worker restart tests pass.
+- [x] Recon DNS gating and inventory-delta calculation are enforced before active adapter execution and persisted through the PostgreSQL contract.
+- [x] Runtime composition creates PostgreSQL Recon/Intel repositories from the configured database URL.
+- [x] Recon and Intel API factories accept persistence hooks so production composition can persist successful results before returning.
+- [x] Intel ingestion preserves last-known-good data and quarantines malformed records without replacing valid snapshots in the synthetic contract.
+- [x] A deterministic Recon-to-Intel-to-readiness integration test passes.
+- [ ] Real lab scanning remains blocked unless explicit target authorization is supplied.
+
+### Runtime API completion contract
+
+- Acceptance: one FastAPI composition exposes Recon and Intel routes; asset and finding reads are owner/scope filtered, bounded, deterministic, and backed by PostgreSQL repository methods; existing synthetic factories remain compatible.
+- Verification: focused runtime tests, full unittest discovery, compilation, Compose configuration, and `git diff --check`.
+- Risk: scanner execution and identity provisioning remain environment-specific gates and cannot be inferred from repository tests.
+
+## Phase 8 entry preparation
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P8-SPEC | Define deterministic correlation completeness contract | done | P0-7-EVIDENCE |
+| P8-MATCHING | Add uncertain-match records and negative-case coverage | Verified | P8-SPEC |
+| P8-PERSISTENCE | Persist scope-isolated correlation evidence | Verified | P8-MATCHING |
+| P8-API | Expose bounded, provenance-bearing correlation results | Verified | P8-PERSISTENCE |
+| P8-EVIDENCE | Record Phase 8 evidence and human signoff | Verified | P8-API |
+
+## Phase 9 — Vulnerability Prioritization
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P9-BASELINE | Extend intel-priority-v1 with business criticality input | Verified | P8-EVIDENCE |
+| P9-MODEL | Add model/pipeline versioning with artifact checksums | Verified | P9-BASELINE |
+| P9-QUEUE | Add 48-hour SLA remediation queue | Verified | P9-MODEL |
+| P9-EXPLAIN | Add explainable ranking output | Verified | P9-QUEUE |
+| P9-EVIDENCE | Record Phase 9 evidence and human signoff | Verified | P9-EXPLAIN |
+
+## Phase 10 — Assisted Remediation and Auto-Fix Safety
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P10-PROPOSAL | Generate remediation proposals (never execute) | Verified | P9-EVIDENCE |
+| P10-VALIDATE | Validate proposals, reject unsafe/destructive ops | Verified | P10-PROPOSAL |
+| P10-QUEUE | Track proposals through PROPOSED/APPROVED/REJECTED | Verified | P10-VALIDATE |
+| P10-APPROVAL | Require admin role for approve/reject | Verified | P10-QUEUE |
+| P10-PROVENANCE | Attach SHA-256 digest, prompt/model version | Verified | P10-PROPOSAL |
+| P10-SECRETS | Scrub secrets from environment facts | Verified | P10-PROPOSAL |
+| P10-EVIDENCE | Record Phase 10 evidence and human signoff | Verified | P10-APPROVAL |
+
+## Phase 11 — Guard MVP (LLM Security Middleware)
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P11-CONFIG | GuardConfig with API key secret/digest, upstream allowlist | Verified | P10-EVIDENCE |
+| P11-RATELIMIT | Per-client rate limiter (token bucket) | Verified | P11-CONFIG |
+| P11-PROMPT-DETECT | Prompt injection detection (regex/heuristic) | Verified | P11-CONFIG |
+| P11-PII-SCAN | PII response scanning (SSN, email, credit card) | Verified | P11-CONFIG |
+| P11-API | FastAPI /v1/chat/completions, /health, /ready | Verified | P11-PROMPT-DETECT |
+| P11-AUTH | HMAC-SHA256 API key authentication | Verified | P11-CONFIG |
+| P11-EVENTS | attack_blocked and guard_request event emission | Verified | P11-API |
+| P11-HEADERS | Security headers middleware (CSP, nosniff, DENY) | Verified | P11-API |
+| P11-EVIDENCE | Record Phase 11 evidence and human signoff | Verified | P11-EVENTS |
+
+## Phase 12 — Integration and End-to-End Validation
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P12-RECON-INTEL | Recon discovers assets, Intel matches CVEs | Verified | P11-EVIDENCE |
+| P12-INTEL-GUARD | Intel findings feed Guard, Guard blocks attacks | Verified | P12-RECON-INTEL |
+| P12-READINESS | All three traces feed into readiness score | Verified | P12-INTEL-GUARD |
+| P12-REMEDIATION | Remediation proposals through full lifecycle | Verified | P12-READINESS |
+| P12-EVIDENCE | Record Phase 12 evidence and human signoff | Verified | P12-REMEDIATION |
+
+## Phase 13 — Dashboard (Open Design)
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P13-DESIGN-TOKENS | Open Design CSS custom properties (colors, spacing, animation) | Verified | P12-EVIDENCE |
+| P13-API | FastAPI dashboard routes (assets, findings, readiness, guard-events) | Verified | P13-DESIGN-TOKENS |
+| P13-SECURITY | Security headers, auth, generic error envelopes | Verified | P13-API |
+| P13-CLI | Dashboard CLI commands (dual-track) | Verified | P13-API |
+| P13-INTEGRATION | Recon → Intel → Guard → Readiness data flow | Verified | P13-SECURITY |
+| P13-EVIDENCE | Record Phase 13 evidence and human signoff | Verified | P13-INTEGRATION |
+
+### Recorded human decision — 2026-10-18
+
+- Phase 6 and Phase 7 runtime/evidence gates: **approved with exceptions**.
+- Phase 8 implementation: **authorized**.
+- Phase 9 implementation: **authorized**.
+- Phase 10 implementation: **authorized**.
+- Phase 11 implementation: **authorized**.
+- Phase 12 implementation: **authorized**.
+- Phase 13 implementation: **authorized**.
+- Retained exceptions: real scanner execution requires a separately authorized isolated lab; XGBoost requires evidence of improvement over deterministic baseline; ONNX semantic detection requires separate evaluation; production identity/session provisioning is deployment-specific.
+- No automatic remediation execution is authorized by this phase.
+- Guard proxy only communicates with allowlisted HTTPS upstreams.
+- Dashboard communicates only with local API routes; no external targets.
 
 Use [tasks/plan.md](plan.md) for acceptance criteria and exact verification.

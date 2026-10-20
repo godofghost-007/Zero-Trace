@@ -18,7 +18,14 @@ class MigrationTests(unittest.TestCase):
 
         self.assertEqual(
             versions,
-            ["0001_foundation", "0002_event_reliability", "0003_recon"],
+            [
+                "0001_foundation",
+                "0002_event_reliability",
+                "0003_recon",
+                "0004_intel",
+                "0005_recon_inventory",
+                "0006_correlation",
+            ],
         )
         self.assertIn("processed_events", sql)
         self.assertIn("dead_letter_reason", sql)
@@ -39,3 +46,11 @@ class MigrationTests(unittest.TestCase):
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
         self.assertIn("recon_runs_scope_target_profile", sql)
         self.assertIn("recon_idempotency_key_unique", sql)
+
+    def test_intel_migration_defines_facts_and_findings(self) -> None:
+        sql = "\n".join(migration_statements())
+
+        self.assertIn("intel_vulnerability_facts", sql)
+        self.assertIn("intel_findings", sql)
+        self.assertIn("formula_version", sql)
+        self.assertIn("intel_uncertain_matches", sql)

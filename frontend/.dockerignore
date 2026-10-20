@@ -1,0 +1,11 @@
+node_modules
+.venv
+__pycache__
+*.py[cod]
+instance
+dist
+.git
+.env
+.env.*
+.manus-logs
+*.manus-starter-*

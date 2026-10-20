@@ -1,0 +1,351 @@
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timezone
+import json
+import time
+from typing import Callable, Mapping, Protocol
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.parse import urlsplit
+
+from .intel import IntelError, VulnerabilityFact, normalize_cve, normalize_cpe, payload_digest
+
+
+NVD_ENDPOINT = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+EPSS_ENDPOINT = "https://api.first.org/data/v1/epss"
+CISA_KEV_ENDPOINT = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+MAX_FEED_BYTES = 8 * 1024 * 1024
+
+
+class FeedError(ValueError):
+    """Raised for bounded transport or malformed feed data."""
+
+
+@dataclass(frozen=True)
+class FeedResponse:
+    status: int
+    headers: Mapping[str, str]
+    body: bytes
+
+
+class FeedTransport(Protocol):
+    def get(self, endpoint: str) -> FeedResponse:
+        ...
+
+
+class RetryingFeedTransport:
+    def __init__(
+        self,
+        transport: FeedTransport,
+        *,
+        max_attempts: int = 3,
+        max_retry_seconds: float = 60.0,
+        sleep: Callable[[float], None] = time.sleep,
+    ) -> None:
+        if not 1 <= max_attempts <= 5 or max_retry_seconds <= 0:
+            raise ValueError("retry bounds are invalid")
+        self.transport = transport
+        self.max_attempts = max_attempts
+        self.max_retry_seconds = max_retry_seconds
+        self.sleep = sleep
+
+    def get(self, endpoint: str) -> FeedResponse:
+        for attempt in range(self.max_attempts):
+            try:
+                response = self.transport.get(endpoint)
+            except FeedError:
+                if attempt + 1 == self.max_attempts:
+                    raise
+                delay = min(self.max_retry_seconds, 2.0 ** attempt)
+                self.sleep(delay)
+                continue
+            if response.status not in {429, 500, 502, 503, 504}:
+                return response
+            if attempt + 1 == self.max_attempts:
+                raise FeedError("feed source remained unavailable")
+            retry_after = response.headers.get("Retry-After", "")
+            try:
+                delay = min(self.max_retry_seconds, max(0.0, float(retry_after)))
+            except ValueError:
+                delay = min(self.max_retry_seconds, 2.0 ** attempt)
+            self.sleep(delay)
+        raise FeedError("feed source could not be retrieved")
+
+
+class SyntheticTransport:
+    def __init__(self, responses: Mapping[str, bytes], *, max_bytes: int = MAX_FEED_BYTES) -> None:
+        self._responses = dict(responses)
+        self._max_bytes = max_bytes
+
+    def get(self, endpoint: str) -> FeedResponse:
+        base_endpoint = endpoint.split("?", 1)[0]
+        if base_endpoint not in {NVD_ENDPOINT, EPSS_ENDPOINT, CISA_KEV_ENDPOINT}:
+            raise FeedError("feed source is not allowlisted")
+        body = self._responses.get(endpoint, self._responses.get(base_endpoint))
+        if body is None or len(body) > self._max_bytes:
+            raise FeedError("feed response is unavailable or too large")
+        return FeedResponse(200, {"content-type": "application/json"}, body)
+
+
+class UrllibFeedTransport:
+    def __init__(self, *, timeout_seconds: int = 10, max_bytes: int = MAX_FEED_BYTES) -> None:
+        if not 1 <= timeout_seconds <= 30:
+            raise ValueError("feed timeout is outside the allowed range")
+        if not 1024 <= max_bytes <= MAX_FEED_BYTES:
+            raise ValueError("feed size limit is outside the allowed range")
+        self.timeout_seconds = timeout_seconds
+        self.max_bytes = max_bytes
+        self._opener = build_opener(_NoRedirectHandler)
+
+    def get(self, endpoint: str) -> FeedResponse:
+        base_endpoint = endpoint.split("?", 1)[0]
+        if base_endpoint not in {NVD_ENDPOINT, EPSS_ENDPOINT, CISA_KEV_ENDPOINT}:
+            raise FeedError("feed source is not allowlisted")
+        try:
+            with self._opener.open(Request(endpoint, headers={"Accept": "application/json"}), timeout=self.timeout_seconds) as response:
+                if response.status != 200:
+                    raise FeedError("feed source returned an error")
+                body = response.read(self.max_bytes + 1)
+                if len(body) > self.max_bytes:
+                    raise FeedError("feed response is too large")
+                return FeedResponse(response.status, dict(response.headers.items()), body)
+        except FeedError:
+            raise
+        except Exception as error:
+            raise FeedError("feed source could not be retrieved") from error
+
+
+@dataclass(frozen=True)
+class EpssRecord:
+    cve_id: str
+    score: float
+    score_date: date
+
+
+@dataclass(frozen=True)
+class KevRecord:
+    cve_id: str
+    date_added: date
+    due_date: date
+    known_ransomware_campaign_use: bool
+
+
+class NvdFeed:
+    def parse(self, body: bytes, *, retrieved_at: datetime) -> tuple[VulnerabilityFact, ...]:
+        payload = _json_object(body)
+        entries = payload.get("vulnerabilities")
+        if not isinstance(entries, list) or len(entries) > 20_000:
+            raise FeedError("NVD response shape is invalid")
+        digest = payload_digest(body)
+        facts: list[VulnerabilityFact] = []
+        for entry in entries:
+            try:
+                facts.append(_parse_nvd_record(entry, retrieved_at, digest))
+            except (KeyError, IndexError, TypeError, ValueError, IntelError) as error:
+                raise FeedError("NVD record is invalid") from error
+        return tuple(facts)
+
+
+def _parse_nvd_record(
+    entry: object,
+    retrieved_at: datetime,
+    digest: str,
+) -> VulnerabilityFact:
+    if not isinstance(entry, dict):
+        raise TypeError("NVD record must be an object")
+    cve = entry["cve"]
+    cve_id = normalize_cve(cve["id"])
+    summary = next(
+        item["value"] for item in cve["descriptions"]
+        if item.get("lang") == "en"
+    )
+    configurations = cve.get("configurations", [])
+    first_configuration = configurations[0] if configurations else {}
+    cpes = tuple(
+        match["criteria"]
+        for node in first_configuration.get("nodes", [])
+        for match in node.get("cpeMatch", [])
+        if match.get("vulnerable") is True
+    )
+    score = _nvd_score(cve.get("metrics", {}))
+    published = _timestamp(cve.get("published"))
+    modified = _timestamp(cve.get("lastModified"))
+    return VulnerabilityFact(
+        cve_id, "nvd", cve_id, modified.isoformat(),
+        summary, tuple(normalize_cpe(cpe) for cpe in cpes),
+        score, None, None, published, modified, retrieved_at, 1, digest,
+    )
+
+
+def _quarantine_identifier(entry: object) -> str:
+    if isinstance(entry, dict):
+        cve = entry.get("cve")
+        if isinstance(cve, dict) and isinstance(cve.get("id"), str):
+            return cve["id"][:64]
+    return "unknown"
+
+
+@dataclass(frozen=True)
+class NvdSyncResult:
+    facts: tuple[VulnerabilityFact, ...]
+    quarantined: tuple[str, ...]
+    next_start_index: int
+    state: str
+    checkpoint: str | None = None
+
+
+def sync_nvd(
+    transport: FeedTransport,
+    *,
+    page_size: int = 2_000,
+    start_index: int = 0,
+    last_known_good: tuple[VulnerabilityFact, ...] = (),
+    retrieved_at: datetime | None = None,
+    max_pages: int = 100,
+) -> NvdSyncResult:
+    if not 1 <= page_size <= 2_000 or start_index < 0 or max_pages < 1:
+        raise ValueError("NVD pagination bounds are invalid")
+    retrieval_time = retrieved_at or datetime.now(timezone.utc)
+    facts: list[VulnerabilityFact] = []
+    quarantined: list[str] = []
+    current = start_index
+    checkpoint: str | None = None
+    try:
+        for _ in range(max_pages):
+            endpoint = f"{NVD_ENDPOINT}?startIndex={current}&resultsPerPage={page_size}"
+            response = transport.get(endpoint)
+            payload = _json_object(response.body)
+            entries = payload.get("vulnerabilities")
+            total = payload.get("totalResults")
+            if isinstance(entries, list) and "totalResults" not in payload:
+                return NvdSyncResult(
+                    NvdFeed().parse(response.body, retrieved_at=retrieval_time),
+                    (),
+                    len(entries),
+                    "fresh",
+                    None,
+                )
+            if not isinstance(entries, list) or not isinstance(total, int):
+                raise FeedError("NVD pagination metadata is invalid")
+            digest = payload_digest(response.body)
+            for entry in entries:
+                try:
+                    facts.append(_parse_nvd_record(entry, retrieval_time, digest))
+                except (KeyError, IndexError, TypeError, ValueError, IntelError):
+                    quarantined.append(_quarantine_identifier(entry))
+            current += len(entries)
+            checkpoint = str(current)
+            if current >= total or not entries:
+                break
+        return NvdSyncResult(tuple(facts), tuple(quarantined), current, "fresh", checkpoint)
+    except FeedError:
+        if last_known_good:
+            return NvdSyncResult(last_known_good, tuple(quarantined), current, "degraded", checkpoint)
+        raise
+
+
+def merge_intel_signals(
+    facts: tuple[VulnerabilityFact, ...],
+    epss_records: tuple["EpssRecord", ...],
+    kev_records: tuple["KevRecord", ...],
+) -> tuple[VulnerabilityFact, ...]:
+    epss = {record.cve_id: record for record in epss_records}
+    kev = {record.cve_id: record for record in kev_records}
+    return tuple(
+        replace(
+            fact,
+            epss_score=(
+                epss[fact.cve_id].score if fact.cve_id in epss else None
+            ),
+            kev=fact.cve_id in kev if kev else None,
+            epss_score_date=(
+                epss[fact.cve_id].score_date if fact.cve_id in epss else None
+            ),
+            kev_due_date=(
+                kev[fact.cve_id].due_date if fact.cve_id in kev else None
+            ),
+        )
+        for fact in facts
+    )
+
+
+class EpssFeed:
+    def parse(self, body: bytes) -> tuple[EpssRecord, ...]:
+        entries = _json_object(body).get("data")
+        if not isinstance(entries, list) or len(entries) > 100_000:
+            raise FeedError("EPSS response shape is invalid")
+        try:
+            return tuple(
+                EpssRecord(normalize_cve(item["cve"]), _bounded_float(item["epss"], 0.0, 1.0), date.fromisoformat(item["date"]))
+                for item in entries
+            )
+        except (KeyError, TypeError, ValueError, IntelError) as error:
+            raise FeedError("EPSS record is invalid") from error
+
+
+class KevFeed:
+    def parse(self, body: bytes) -> tuple[KevRecord, ...]:
+        entries = _json_object(body).get("vulnerabilities")
+        if not isinstance(entries, list) or len(entries) > 100_000:
+            raise FeedError("KEV response shape is invalid")
+        try:
+            return tuple(
+                KevRecord(
+                    normalize_cve(item["cveID"]),
+                    date.fromisoformat(item["dateAdded"]),
+                    date.fromisoformat(item["dueDate"]),
+                    _boolean(item["knownRansomwareCampaignUse"]),
+                )
+                for item in entries
+            )
+        except (KeyError, TypeError, ValueError, IntelError) as error:
+            raise FeedError("KEV record is invalid") from error
+
+
+def _json_object(body: bytes) -> dict[str, object]:
+    if len(body) > MAX_FEED_BYTES:
+        raise FeedError("feed response is too large")
+    try:
+        value = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise FeedError("feed response is not valid JSON") from error
+    if not isinstance(value, dict):
+        raise FeedError("feed response must be an object")
+    return value
+
+
+def _nvd_score(metrics: Mapping[str, object]) -> float | None:
+    for key in ("cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+        values = metrics.get(key)
+        if isinstance(values, list) and values:
+            data = values[0].get("cvssData")
+            if isinstance(data, dict) and "baseScore" in data:
+                return _bounded_float(data["baseScore"], 0.0, 10.0)
+    return None
+
+
+def _timestamp(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("timestamp is required")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _bounded_float(value: object, lower: float, upper: float) -> float:
+    result = float(value)
+    if not lower <= result <= upper:
+        raise ValueError("numeric value is out of range")
+    return result
+
+
+def _boolean(value: object) -> bool:
+    if value in {"Yes", "Known"}:
+        return True
+    if value in {"No", "Unknown"}:
+        return False
+    raise ValueError("boolean value is invalid")
+
+
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, *args: object, **kwargs: object) -> None:
+        return None

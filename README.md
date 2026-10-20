@@ -1,4 +1,4 @@
-# ZeroTrace
+﻿# ZeroTrace
 
 ZeroTrace is a planned three-module cyber-defense platform:
 
@@ -6,10 +6,13 @@ ZeroTrace is a planned three-module cyber-defense platform:
 - **Intel** correlates vulnerability intelligence and prioritizes remediation.
 - **Guard** protects LLM traffic through an OpenAI-compatible gateway.
 
-This repository is currently at **Phase 6 — Recon MVP**. The runnable
-foundation, deterministic readiness-score contract, tested security primitives,
-event delivery state model, and constrained Recon contracts/adapters are in
-place.
+This repository is currently at **Phase 11 â€” Guard MVP**. Phases 0â€“11 are
+implemented and verified: runnable foundation, deterministic readiness-score
+contract, tested security primitives, event delivery state model, constrained
+Recon contracts/adapters with safety controls, Intel boundary with correlation
+completeness, vulnerability prioritization with intel-priority-v2, assisted
+remediation with human-gated approval, and Guard middleware with LLM security
+protection.
 
 ## Development workflow
 
@@ -33,36 +36,85 @@ copilot-zerotrace-loop/ Development workflow kit
 
 ## Current status
 
-- Phase 0 and Phase 1 are complete with recorded evidence.
-- Phase 2 provides validated settings, logging, health endpoints, and an
-  idempotent PostgreSQL foundation migration plus event-reliability persistence
-  primitives.
-- Phase 3 provides versioned AEI, VUI, and AIET calculations with explicit
-  unknown-component and coverage behavior. The governing combined fixture
-  `(20, 35, 25)` evaluates to 73.
-- Phase 4 provides fail-closed password/API-key primitives, role checks, CSRF
-  tokens, secure session-cookie formatting, request-size limits, security
-  headers, and private audit-file handling. Persistent user/session storage
-  and full API route authentication remain later integration work.
-- Phase 5 provides a validated versioned event envelope, commit-before-publish
-  outbox semantics, idempotent consumer processing, bounded retry/backoff,
-  dead-letter transitions, and stale-record reconciliation. The in-memory
-  repository is a deterministic test double; PostgreSQL and Redis integration
-  remain deployment work.
+- Phases 0â€“4 are complete with recorded evidence (settings, errors, logging,
+  health, migrations, readiness score, auth/security primitives).
+- Phase 5 provides event reliability (commit-before-publish, idempotent
+  consumer, retry/backoff, dead-letter, reconciliation) plus the PostgreSQL
+  outbox and Redis/Valkey Streams runtime contracts in `app/events_pg.py`.
 - Phase 6 provides approved-scope enforcement, fixed-profile Subfinder/Nmap/TLS
   and read-only S3 adapter boundaries, untrusted-output parsing, normalized
   observations, explicit timeout/cancellation/partial/failure states,
-  idempotent run creation, and result-before-event ordering. Tests use fake
-  runners/connectors only; no external or live lab target was scanned.
-  Target authorization now supports exact-domain, single-use DNS TXT
-  challenges with bounded system DNS or allowlisted DoH resolution. Isolated
-  lab queueing rejects scopes without an active authorization.
+  idempotent run creation, result-before-event ordering, rate limiting before
+  run creation, bounded concurrency, configurable retry for transient failures,
+  and DNS gating before active adapter execution. Tests use synthetic fixtures
+  only; no external target was scanned.
+  - P6-LAB (real scanner execution) is **blocked** pending an explicitly
+    authorized isolated lab target (`testsite.zerotrace.local` per Project
+    Documentation v2.0, Section 11.1) and subfinder/nmap availability.
+- Phase 7 provides normalized, provenance-bearing NVD/EPSS/KEV intelligence,
+  bounded fixed-endpoint feed adapters with pagination/checkpoints,
+  malformed-record quarantine, last-known-good snapshots, merged EPSS/KEV
+  facts, deterministic service-to-CVE matching, explainable
+  `intel-priority-v1` prioritization, PostgreSQL persistence, and role-checked
+  ingestion/finding API contracts. Feed operations (pagination, quarantine,
+  backoff, last-known-good) are implemented in `app/intel_feeds.py`.
+- Phase 8 provides deterministic exact-CPE and unique fallback correlation,
+  explicit uncertain-match evidence, end-to-end persisted correlation
+  orchestration (`CorrelationBatch`, `correlate_scope()`, `save_correlation()`),
+  PostgreSQL persistence, and scope-filtered paginated
+  `/api/v1/uncertain-matches` route.
+- Phase 9 provides `intel-priority-v2` vulnerability prioritization with
+  business criticality input, model/pipeline versioning with artifact checksums,
+  48-hour SLA remediation queue, and explainable ranking output.
+- Phase 10 provides assisted remediation: safe remediation proposals generated
+  and validated (no secrets, no privilege escalation, no destructive ops),
+  SHA-256 digest provenance, admin-only approve/reject, **no automatic
+  execution** â€” ZeroTrace never runs a proposed fix against any target.
+- Phase 11 provides Guard MVP â€” LLM security middleware through an
+  OpenAI-compatible gateway: `/v1/chat/completions` endpoint, API key
+  authentication (HMAC-SHA256), per-client rate limiting, regex/heuristic
+  prompt injection detection, PII response scanning, upstream allowlist
+  (HTTPS-only, no SSRF), security headers, `attack_blocked` events, and
+  `/health`/`/ready` endpoints. ONNX semantic detection, streaming, and Ollama
+  integration are deferred to later phases.
 - No scanners or external targets are used during development setup.
 - No generated remediation is executed automatically.
 - Secrets and production/customer data must not be placed in source, fixtures,
   logs, or hosted Copilot context without an approved data-handling decision.
 
 ## Local verification
+
+### Test-only authorization harness
+
+For demonstrations, use the removable
+[TestOnlyAuthorizationRegistry](app/test_authorization.py). It is not a
+production bypass:
+
+- It only initializes for `ZEROTRACE_ENV=test` or `development`.
+- It requires an `admin` principal and the code `ZEROTRACE-TEST-ONLY` by
+  default. Set `ZEROTRACE_TEST_AUTH_CODE` to use a local replacement.
+- It accepts only `.test` domains and `localhost`/`host.docker.internal`;
+  public domains, IP addresses, paths, and arbitrary URLs are rejected.
+- Authorizations expire after ten minutes by default and are labelled as
+  synthetic test authorization.
+
+Example:
+
+```python
+from app.security import Principal
+from app.test_authorization import TestOnlyAuthorizationRegistry
+
+authorization = TestOnlyAuthorizationRegistry(environment="test").authorize(
+    Principal("guide-admin", "admin"),
+    code="ZEROTRACE-TEST-ONLY",
+    target="lab.example.test",
+    profile_id="synthetic_inventory_v1",
+)
+```
+
+Remove this module before a production release if the demonstration harness is
+not needed. Production authorization continues to require the exact-domain
+DNS TXT challenge or an explicitly recorded isolated-lab authorization.
 
 Install the project dependency and start the disposable development database:
 
@@ -88,8 +140,8 @@ py -m app
 ```
 
 In another terminal, request `http://127.0.0.1:8765/health`. The liveness
-endpoint returns HTTP 200. `/ready` remains degraded until dependency checks
-are wired into the runtime in a later foundation increment.
+endpoint returns HTTP 200. `/ready` probes PostgreSQL and returns degraded
+status when the dependency is unavailable.
 
 Run the automated checks:
 
@@ -101,3 +153,6 @@ docker compose --profile full config --quiet
 docker compose --profile dev config --quiet
 git diff --check
 ```
+
+
+

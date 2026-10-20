@@ -79,6 +79,66 @@ class ReconApiTests(unittest.TestCase):
         self.assertEqual(asset.status_code, 200)
         self.assertEqual(asset.json(), {"assetId": "lab.example.test"})
 
+    def test_operator_can_create_scope_and_read_scan_result(self) -> None:
+        headers = {"X-Principal-ID": "operator-1", "X-Principal-Role": "operator"}
+        created = self.client.post(
+            "/api/v1/recon/scopes",
+            headers=headers,
+            json={
+                "scopeId": "scope-created",
+                "targets": ["lab.example.test"],
+                "environment": "synthetic",
+                "profiles": ["synthetic_inventory_v1"],
+                "expiresInHours": 2,
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+        self.assertEqual(created.json()["scopeId"], "scope-created")
+        self.assertEqual(created.json()["targets"], ["lab.example.test"])
+
+        listed = self.client.get(
+            "/api/v1/recon/scopes",
+            headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "viewer"},
+        )
+        self.assertEqual(listed.status_code, 200)
+        self.assertIn(
+            "scope-created",
+            [item["scopeId"] for item in listed.json()["items"]],
+        )
+
+        queued = self.client.post(
+            "/api/v1/recon/scans",
+            headers=headers,
+            json={
+                "scopeId": "scope-created",
+                "target": "lab.example.test",
+                "profileId": "synthetic_inventory_v1",
+            },
+        )
+        self.assertEqual(queued.status_code, 202)
+        scan_id = queued.json()["scanId"]
+        self.queue.run_pending()
+
+        result = self.client.get(
+            f"/api/v1/recon/scans/{scan_id}/result",
+            headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "viewer"},
+        )
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["state"], "completed")
+        self.assertEqual(result.json()["assets"], ["lab.example.test"])
+
+    def test_scope_creation_requires_operator_role(self) -> None:
+        response = self.client.post(
+            "/api/v1/recon/scopes",
+            headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "viewer"},
+            json={
+                "scopeId": "scope-viewer",
+                "targets": ["lab.example.test"],
+                "profiles": ["synthetic_inventory_v1"],
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_missing_scan_is_not_found(self) -> None:
         response = self.client.get(
             "/api/v1/recon/scans/missing",

@@ -4,7 +4,7 @@ from typing import Any
 from uuid import uuid4
 
 from .events import EventEnvelope
-from .recon import ReconError
+from .recon import InventoryDelta, ReconError
 
 
 class PostgresReconRepository:
@@ -12,6 +12,42 @@ class PostgresReconRepository:
 
     def __init__(self, connection_factory: Callable[[], Any]) -> None:
         self.connection_factory = connection_factory
+
+    def list_assets(self, owner_id: str) -> list[dict[str, str]]:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT a.asset_id, a.canonical_identifier
+                    FROM recon_assets AS a
+                    JOIN recon_scopes AS s ON s.scope_id = a.scope_id
+                    WHERE s.owner_id = %s
+                    ORDER BY a.canonical_identifier, a.asset_id
+                    """,
+                    (owner_id,),
+                )
+                rows = cursor.fetchall()
+        return [
+            {"assetId": str(asset_id), "identifier": identifier}
+            for asset_id, identifier in rows
+        ]
+
+    def get_asset(self, owner_id: str, asset_id: str) -> dict[str, str] | None:
+        with self.connection_factory() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT a.asset_id, a.canonical_identifier
+                    FROM recon_assets AS a
+                    JOIN recon_scopes AS s ON s.scope_id = a.scope_id
+                    WHERE s.owner_id = %s AND a.asset_id = %s
+                    """,
+                    (owner_id, asset_id),
+                )
+                row = cursor.fetchone()
+        if row is None:
+            return None
+        return {"assetId": str(row[0]), "identifier": row[1]}
 
     def claim_idempotency(self, key: str, request_hash: str) -> str | None:
         with self.connection_factory() as connection:
@@ -90,6 +126,7 @@ class PostgresReconRepository:
         assets: Iterable[str],
         services: Iterable[tuple[str, str, int, str]],
         warnings: Iterable[str],
+        inventory_delta: InventoryDelta | None = None,
     ) -> None:
         event_id = str(uuid4())
         asset_list = list(assets)
@@ -185,6 +222,29 @@ class PostgresReconRepository:
                     """,
                     (state, json.dumps(warning_list), run_id),
                 )
+                if inventory_delta is not None:
+                    cursor.execute(
+                        """
+                        INSERT INTO recon_inventory_deltas
+                            (delta_id, run_id, scope_id, added_assets,
+                             removed_assets, added_services, removed_services)
+                        VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb)
+                        ON CONFLICT (run_id) DO UPDATE SET
+                            added_assets = EXCLUDED.added_assets,
+                            removed_assets = EXCLUDED.removed_assets,
+                            added_services = EXCLUDED.added_services,
+                            removed_services = EXCLUDED.removed_services
+                        """,
+                        (
+                            str(uuid4()),
+                            run_id,
+                            scope_id,
+                            json.dumps(inventory_delta.added_assets),
+                            json.dumps(inventory_delta.removed_assets),
+                            json.dumps(inventory_delta.added_services),
+                            json.dumps(inventory_delta.removed_services),
+                        ),
+                    )
                 cursor.execute(
                     """
                     INSERT INTO event_outbox

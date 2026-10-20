@@ -1,0 +1,84 @@
+# ZeroTrace P6-LAB Isolated Lab Environment
+#
+# This Docker Compose file creates a controlled, isolated lab environment
+# for P6-LAB Recon scanner testing (Subfinder, Nmap, TLS).
+#
+# SECURITY BOUNDARIES:
+# - All container ports are published to 127.0.0.1 (localhost) ONLY.
+# - No ports are exposed to the external network (0.0.0.0 is not used).
+# - Services are only reachable from the host machine running Docker.
+# - This lab is for local, authorized P6-LAB testing only.
+#
+# Before running, add these entries to your hosts file:
+#   Windows: %SystemRoot%\System32\drivers\etc\hosts
+#     127.0.0.1 lab-web.zerotrace.local
+#     127.0.0.1 lab-web-alt.zerotrace.local
+#     127.0.0.1 lab-tls.zerotrace.local
+#
+# Usage:
+#   docker compose -f compose.lab.yaml up -d
+#   # Run ZeroTrace Recon against the lab targets (e.g., lab-web.zerotrace.local)
+#   docker compose -f compose.lab.yaml down
+#
+# To clean up:
+#   docker compose -f compose.lab.yaml down -v
+
+name: zerotrace-lab
+
+services:
+  # Web server on port 80 — discoverable by Subfinder/Nmap
+  lab-web:
+    image: nginx:alpine
+    container_name: zerotrace-lab-web
+    ports:
+      - "127.0.0.1:8080:80"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "zerotrace.lab.service=web"
+      - "zerotrace.lab.target=lab-web.zerotrace.local"
+      - "zerotrace.lab.port=80"
+
+  # Web server on port 8080 — additional discovery target
+  lab-web-alt:
+    image: httpd:alpine
+    container_name: zerotrace-lab-web-alt
+    ports:
+      - "127.0.0.1:8081:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "zerotrace.lab.service=web-alt"
+      - "zerotrace.lab.target=lab-web-alt.zerotrace.local"
+      - "zerotrace.lab.port=8080"
+
+  # TLS-enabled service on port 443 — discoverable by TLS adapter
+  lab-tls:
+    image: nginx:alpine
+    container_name: zerotrace-lab-tls
+    ports:
+      - "127.0.0.1:8443:443"
+    environment:
+      - NGINX_ENTRYPOINT_QUIET_LOGS=1
+    command: ["/bin/sh", "-c", "exec nginx -g 'daemon off;'"]
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "https://localhost:443/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - "zerotrace.lab.service=tls"
+      - "zerotrace.lab.target=lab-tls.zerotrace.local"
+      - "zerotrace.lab.port=443"
+
+networks:
+  default:
+    driver: bridge
+
+volumes: {}

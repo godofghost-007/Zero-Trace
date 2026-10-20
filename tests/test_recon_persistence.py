@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+from app.recon import InventoryDelta
 from app.recon_pg import PostgresReconRepository
 
 
@@ -18,6 +19,7 @@ class ReconPersistenceTests(unittest.TestCase):
             assets=("lab.example.test",),
             services=(("lab.example.test", "tcp", 443, "https"),),
             warnings=(),
+            inventory_delta=InventoryDelta(added_assets=("new.lab.example.test",)),
         )
 
         connection.__enter__.assert_called_once()
@@ -28,6 +30,7 @@ class ReconPersistenceTests(unittest.TestCase):
         ]
         self.assertTrue(any("INSERT INTO recon_assets" in statement for statement in executed))
         self.assertTrue(any("INSERT INTO event_outbox" in statement for statement in executed))
+        self.assertTrue(any("INSERT INTO recon_inventory_deltas" in statement for statement in executed))
         self.assertTrue(all("%s" in statement or "UPDATE" in statement for statement in executed))
 
     def test_idempotency_key_reuse_with_changed_hash_is_rejected(self) -> None:

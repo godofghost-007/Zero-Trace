@@ -1,0 +1,63 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://zerotrace:${POSTGRES_PASSWORD:-local-demo-change-me}@postgres:5432/zerotrace
+      REDIS_URL: redis://valkey:6379/0
+      REDIS_STREAM: zerotrace:events
+      ZEROTRACE_DATA_DIR: /data
+      AUDIT_DB_PATH: /data/guard-audit.sqlite
+      FRONTEND_DIST: /app/dist/public
+      DEMO_MODE: "true"
+      AUTO_CREATE_SCHEMA: "true"
+      FLASK_DEBUG: "false"
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+    volumes:
+      - zerotrace_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3000/api/v1/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: zerotrace
+      POSTGRES_USER: zerotrace
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-demo-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zerotrace -d zerotrace"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  valkey_data:
+  zerotrace_data:

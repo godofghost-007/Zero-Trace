@@ -1,0 +1,31 @@
+name: zerotrace
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: zerotrace
+      POSTGRES_USER: zerotrace
+      POSTGRES_PASSWORD: zerotrace-dev-only
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zerotrace -d zerotrace"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    profiles: ["core", "full", "dev"]
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    profiles: ["full", "dev"]
+
+volumes:
+  postgres_data:

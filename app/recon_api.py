@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import threading
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -26,6 +26,22 @@ class ScanRequest(BaseModel):
     scopeId: str = Field(min_length=1, max_length=128)
     target: str = Field(min_length=1, max_length=253)
     profileId: str = Field(min_length=1, max_length=64)
+
+
+class ScopeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scopeId: str = Field(
+        min_length=1,
+        max_length=96,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
+    targets: tuple[str, ...] = Field(min_length=1, max_length=10)
+    environment: str = Field(
+        default="synthetic", pattern="^(synthetic|isolated_lab)$"
+    )
+    profiles: tuple[str, ...] = Field(min_length=1, max_length=4)
+    expiresInHours: int = Field(default=24, ge=1, le=168)
 
 
 class AuthorizationChallengeRequest(BaseModel):
@@ -58,12 +74,14 @@ class ReconQueue:
         engine: ReconEngine,
         repository: InMemoryReconRepository,
         authorization_registry: AuthorizationRegistry | None = None,
+        persistence: object | None = None,
     ) -> None:
         self.engine = engine
         self.repository = repository
         self._scopes: dict[str, Scope] = {}
         self._scope_authorizations: dict[str, str] = {}
         self.authorization_registry = authorization_registry
+        self.persistence = persistence
         self._jobs: dict[str, _QueuedScan] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
         self._lock = threading.Lock()
@@ -119,6 +137,27 @@ class ReconQueue:
                 profile_id=job.profile_id,
                 idempotency_key=job.idempotency_key,
             )
+            if self.persistence is not None and job.run.state in {
+                ReconRunState.COMPLETED,
+                ReconRunState.PARTIAL,
+                ReconRunState.FAILED,
+                ReconRunState.TIMED_OUT,
+                ReconRunState.CANCELLED,
+            }:
+                result = self.repository.results.get(job.run.run_id)
+                if result is not None:
+                    self.persistence.commit_results(
+                        job.run.run_id,
+                        job.scope.scope_id,
+                        job.run.state.value,
+                        result.assets,
+                        tuple(
+                            (service.asset, service.protocol, service.port, service.product or "unknown")
+                            for service in result.services
+                        ),
+                        job.run.warnings,
+                        result.inventory_delta,
+                    )
             job.state = job.run.state
 
     def cancel(self, scan_id: str) -> _QueuedScan:
@@ -138,6 +177,7 @@ class ReconQueue:
 def create_recon_app(
     queue: ReconQueue,
     principal_provider: Callable[[Request], Principal | None],
+    read_repository: object | None = None,
 ) -> FastAPI:
     app = FastAPI()
 
@@ -160,6 +200,47 @@ def create_recon_app(
             status_code=status,
             content={"error": {"code": "recon_error", "message": str(error)}},
         )
+
+    def scope_view(scope: Scope) -> dict[str, object]:
+        return {
+            "scopeId": scope.scope_id,
+            "targets": list(scope.targets),
+            "environment": scope.environment,
+            "profiles": list(scope.profiles),
+            "approved": scope.approved,
+            "expiresAt": scope.expires_at.isoformat(),
+        }
+
+    @app.get("/api/v1/recon/scopes")
+    async def list_scopes(request: Request) -> dict[str, object]:
+        actor = principal(request, "viewer")
+        scopes = [
+            scope_view(scope)
+            for scope in queue._scopes.values()
+            if scope.owner_id == actor.subject
+        ]
+        return {"items": sorted(scopes, key=lambda item: str(item["scopeId"]))}
+
+    @app.post("/api/v1/recon/scopes", status_code=201)
+    async def create_scope(
+        request: Request, payload: ScopeRequest
+    ) -> dict[str, object]:
+        actor = principal(request, "operator")
+        existing = queue._scopes.get(payload.scopeId)
+        if existing is not None and existing.owner_id != actor.subject:
+            raise AuthorizationError("Authorization denied", 403)
+        scope = Scope(
+            scope_id=payload.scopeId,
+            owner_id=actor.subject,
+            targets=payload.targets,
+            environment=payload.environment,
+            approved=True,
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(hours=payload.expiresInHours),
+            profiles=payload.profiles,
+        )
+        queue.add_scope(scope)
+        return scope_view(scope)
 
     @app.post("/api/v1/recon/scans", status_code=202)
     async def create_scan(
@@ -237,6 +318,45 @@ def create_recon_app(
             raise AuthorizationError("Authorization denied", 403)
         return {"scanId": scan_id, "state": job.state}
 
+    @app.get("/api/v1/recon/scans/{scan_id}/result")
+    async def get_scan_result(
+        request: Request, scan_id: str
+    ) -> dict[str, object]:
+        actor = principal(request, "viewer")
+        job = queue.get(scan_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="scan not found")
+        if job.scope.owner_id != actor.subject:
+            raise AuthorizationError("Authorization denied", 403)
+        result = (
+            queue.repository.results.get(job.run.run_id)
+            if job.run is not None
+            else None
+        )
+        return {
+            "scanId": scan_id,
+            "state": job.state,
+            "target": job.target.value,
+            "profileId": job.profile_id,
+            "assets": list(result.assets) if result is not None else [],
+            "services": [
+                {
+                    "asset": service.asset,
+                    "protocol": service.protocol,
+                    "port": service.port,
+                    "product": service.product,
+                    "version": service.version,
+                    "tlsStatus": service.tls_status,
+                }
+                for service in (result.services if result is not None else ())
+            ],
+            "tlsFindings": [
+                dict(finding)
+                for finding in (result.tls_findings if result is not None else ())
+            ],
+            "warnings": list(job.run.warnings) if job.run is not None else [],
+        }
+
     @app.post("/api/v1/recon/scans/{scan_id}/cancel")
     async def cancel_scan(request: Request, scan_id: str) -> dict[str, str]:
         actor = principal(request, "operator")
@@ -249,6 +369,11 @@ def create_recon_app(
     @app.get("/api/v1/assets")
     async def list_assets(request: Request) -> dict[str, list[str]]:
         actor = principal(request, "viewer")
+        if read_repository is not None:
+            return {"assets": [
+                item["identifier"]
+                for item in read_repository.list_assets(actor.subject)
+            ]}
         assets = {
             asset
             for run_id, result in queue.repository.results.items()
@@ -261,6 +386,11 @@ def create_recon_app(
     @app.get("/api/v1/assets/{asset_id}")
     async def get_asset(request: Request, asset_id: str) -> dict[str, str]:
         actor = principal(request, "viewer")
+        if read_repository is not None:
+            asset = read_repository.get_asset(actor.subject, asset_id)
+            if asset is not None:
+                return asset
+            raise HTTPException(status_code=404, detail="asset not found")
         for run_id, result in queue.repository.results.items():
             scope = queue._scopes[queue.repository.runs[run_id].scope_id]
             if scope.owner_id == actor.subject and asset_id in result.assets:

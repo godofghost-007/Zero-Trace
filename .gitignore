@@ -1,47 +1,47 @@
 # Python
-.venv/
-venv/
 __pycache__/
 *.py[cod]
-*.egg-info/
+*.pyo
+.Python
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
+.venv/
+venv/
 
-# Secrets / environment
+# Environment and secrets
 .env
 .env.*
 !.env.example
 *.pem
 *.key
+secrets/
 
-# Model weights and runtime assets (kept outside the repo or downloaded by script)
-models/*.gguf
-models/*.onnx
-models/*.bin
-*.gguf
+# Build and distribution output
+build/
+dist/
+*.egg-info/
 
-# Databases / audit data / volumes
+# Application data and local services
+data/
+backups/
 *.sqlite
 *.sqlite3
 *.db
-data/
-audit/
-volumes/
 
-# Node (dashboard tooling, if any)
-node_modules/
+# Containers and generated output
+.docker/
+docker-compose.override.yml
+coverage.xml
 
-# OS / editor
-Thumbs.db
-desktop.ini
-.vscode/
+# Editors and operating-system files
+.vscode/settings.json
 .idea/
-*.swp
+.DS_Store
+Thumbs.db
 
-# Local scratch
-tmp/
-scratch/
-*.log
+# Local agent/tooling fixtures and archived checkpoints
+.agents/
+zerotracedemo.zip

@@ -439,6 +439,116 @@ execution. It is independent of Intel and must remain synthetic in tests.
    - **Dependencies:** P6 human signoff
    - **Scope:** Small
 
+## Phase 7 — Intel boundary
+
+Phase 7 implements the approved Intel specification in independently
+verifiable vertical slices. Production feeds remain deferred until synthetic
+and disposable PostgreSQL verification passes.
+
+### Architecture decisions
+
+- Feed adapters use fixed configured NVD, EPSS, and CISA KEV endpoints.
+- Network transport is injected in tests, bounded by timeout/body limits, and
+  rejects redirects.
+- Intel facts store provenance and digests rather than unrestricted raw feeds.
+- Matching is exact CPE first, then exact vendor/product with compatible
+  version evidence; ambiguous matches remain unmatched.
+- Initial priority formula `intel-priority-v1`:
+  `100 * confidence * (0.35 * cvss + 0.30 * epss + 0.25 * kev + 0.10 * exposure)`.
+  Missing CVSS/EPSS/KEV components are omitted from the numerator and the
+  available-weight denominator is renormalized; missingness remains explicit.
+  `cvss` is CVSS/10, `epss` is `[0,1]`, `kev` is `1` or `0`, and `exposure`
+  is `1` for an exposed service and `0` otherwise.
+- API ingestion is operator-only and idempotent; findings are paginated and
+  scope-filtered for viewers/operators.
+- External feed access is disabled in automated verification; live provider
+  access requires a separate operational approval.
+
+### Task list
+
+1. **P7-MODEL:** Implement typed vulnerability facts, provenance, CPE
+   normalization, freshness, and the frozen priority formula.
+   - **Acceptance:** Invalid identities/ranges fail; missingness is explicit;
+     priority is bounded, explainable, and monotonic.
+   - **Verify:** `py -m unittest tests.test_intel -v`
+   - **Files:** `app/intel.py`, `tests/test_intel.py`
+   - **Dependencies:** Phase 6 approval
+   - **Scope:** Medium
+
+2. **P7-FEEDS:** Implement fixed NVD/EPSS/KEV parsers and bounded transport.
+   - **Acceptance:** Untrusted fixtures are strictly validated; redirects,
+     oversized responses, malformed records, and out-of-range values fail
+     visibly; revisions are idempotent.
+   - **Verify:** Focused feed tests with injected transport.
+   - **Files:** `app/intel_feeds.py`, `tests/test_intel.py`
+   - **Dependencies:** P7-MODEL
+   - **Scope:** Medium
+
+3. **P7-DB:** Add the forward-only Intel schema and parameterized repository.
+   - **Acceptance:** Facts, revisions, provenance, ingestion state, and
+     findings persist transactionally with outbox insertion.
+   - **Verify:** Migration contract and repository tests.
+   - **Files:** `migrations/0004_intel.sql`, `app/intel_pg.py`,
+     `tests/test_intel_persistence.py`, `tests/test_migrations.py`
+   - **Dependencies:** P7-MODEL, P7-FEEDS
+   - **Scope:** Medium
+
+4. **P7-CORRELATION:** Implement deterministic service-to-CVE matching and
+   finding generation.
+   - **Acceptance:** Exact matches succeed with evidence; ambiguous and
+     incomplete matches remain unmatched; freshness and formula metadata are
+     preserved.
+   - **Verify:** Synthetic correlation and monotonicity tests.
+   - **Files:** `app/intel.py`, `tests/test_intel.py`
+   - **Dependencies:** P7-MODEL, P7-DB
+   - **Scope:** Medium
+
+5. **P7-API:** Add ingestion-status and paginated findings routes with RBAC.
+   - **Acceptance:** Operators ingest only allowlisted sources; viewers read
+     only authorized scopes; idempotency conflicts and generic errors follow
+     the existing API contract.
+   - **Verify:** `py -m unittest tests.test_intel_api -v`
+   - **Files:** `app/intel_api.py`, `tests/test_intel_api.py`
+   - **Dependencies:** P7-CORRELATION
+   - **Scope:** Medium
+
+6. **P7-EVIDENCE:** Run integrated Phase 0–7 verification and record the
+   evidence gate.
+   - **Acceptance:** Full regression, compile, Compose, migration contract,
+     dependency review, and diff checks pass; production feed access remains
+     explicitly deferred.
+   - **Verify:** Full repository commands below.
+   - **Files:** `tasks/evidence/phase-07.md`, `tasks/todo.md`, `README.md`
+   - **Dependencies:** P7-API
+   - **Scope:** Small
+
+### Phase 7 verification commands
+
+```powershell
+py -m unittest discover -s tests -v
+py -m compileall -q app scripts
+docker compose --profile core config --quiet
+docker compose --profile full config --quiet
+docker compose --profile dev config --quiet
+git diff --check
+```
+
+### Phase 7 risks
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Malformed or adversarial feed data | Critical | Strict schemas, bounds, caps, provenance, no execution |
+| False positive service matching | High | Exact evidence, ambiguity rejection, confidence metadata |
+| Stale vulnerability facts | High | Per-source freshness state and visible degraded ingestion |
+| Duplicate feed revisions | Medium | Source/revision uniqueness and idempotent ingestion |
+| Feed provider outage | Medium | Bounded retries, last-known facts, explicit degraded state |
+| Priority formula drift | High | Versioned equation, monotonicity tests, human approval |
+
+### Open questions
+
+- Confirm the proposed `intel-priority-v1` weights before implementation.
+- Confirm whether production feed access remains deferred after Phase 7 tests.
+
 2. **P6-AUTH-CONTRACT:** Implement challenge creation and synthetic DNS
    verification.
    - **Acceptance:** Normalized domains, bounded single-use challenges,
@@ -466,3 +576,74 @@ execution. It is independent of Intel and must remain synthetic in tests.
    - **Files:** `tasks/evidence/phase-06.md`, `tasks/todo.md`, `README.md`
    - **Dependencies:** P6-AUTH-INTEGRATION
    - **Scope:** Small
+
+## Phase 0–7 completion hardening
+
+This follow-up closes requirements identified by comparing the authoritative
+project documentation with the current phase gates. It does not claim
+completion of Phases 8–18.
+
+### Contract and acceptance criteria
+
+1. **P5-RUNTIME:** Provide a real PostgreSQL outbox repository and a
+   Redis/Valkey Streams publisher/consumer boundary, with restart, retry,
+   duplicate, and dead-letter tests using disposable local services.
+2. **P6-SAFETY:** Enforce Recon rate/concurrency limits, bounded retry behavior,
+   DNS resolution gates, inventory-delta observations, and explicit raw-output
+   provenance without enabling destructive operations.
+3. **P7-OPERATIONS:** Add NVD pagination/incremental checkpoints, conditional
+   cache metadata, bounded 429/backoff handling, malformed-record quarantine,
+   last-known-good snapshots, merged EPSS/KEV facts, and real paginated finding
+   queries with scope isolation.
+4. **P0-7-INTEGRATION:** Wire PostgreSQL readiness and a deterministic
+   Recon-to-Intel-to-readiness integration harness. Real scanner execution
+   remains blocked unless the user supplies an authorized isolated lab target.
+5. **P0-7-EVIDENCE:** Update phase evidence to distinguish implemented,
+   integration-verified, and authorization-blocked criteria; do not mark a
+   gate PASS when its operational prerequisite was not executed.
+
+### Verification commands
+
+```powershell
+py -m unittest discover -s tests -v
+py -m compileall -q app scripts
+docker compose --profile core config --quiet
+docker compose --profile full config --quiet
+docker compose --profile dev config --quiet
+docker compose --profile dev up -d postgres
+$env:DATABASE_URL = "postgresql://zerotrace:zerotrace-dev-only@127.0.0.1:5432/zerotrace"
+py scripts/run_migrations.py
+py scripts/run_migrations.py
+git diff --check
+```
+
+### Risks and human gates
+
+- Live Recon requires an exact authorized isolated-lab target, ownership or
+  authorization evidence, profile, and expiry; no arbitrary public URL will be
+  scanned.
+- Live NVD/EPSS/KEV retrieval is read-only but requires explicit outbound
+  network approval and will not be part of unit tests.
+- Redis/Valkey and PostgreSQL execution may require Docker availability; if a
+  service cannot run, the evidence must say BLOCKED rather than PASS.
+- XGBoost evaluation, Guard, dashboard, remediation, and release performance
+  remain later project phases and are not silently pulled into this scope.
+
+## Phase 8 — Correlation completeness
+
+The approved Phase 8 contract is recorded in
+[SPEC-phase-08-correlation.md](../docs/SPEC-phase-08-correlation.md).
+
+### Entry gate
+
+- Phase 6 and Phase 7 evidence reviewed by a human.
+- Phase 0–7 completion hardening is either complete or explicitly marked
+  BLOCKED with an owner and next action.
+- No live Recon execution is authorized by this specification.
+
+### Phase 8 tasks
+
+1. Add uncertain-match records and deterministic correlation coverage.
+2. Persist and expose scope-isolated correlation evidence.
+3. Verify pagination, provenance, freshness, and negative cases.
+4. Record Phase 8 evidence and human signoff.
