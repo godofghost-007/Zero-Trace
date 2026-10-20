@@ -167,4 +167,12 @@ class RuntimePersistenceHookTests(unittest.TestCase):
         queue.enqueue(scope, Target("lab.example.test", "domain"), "synthetic_inventory_v1", None)
         queue.run_pending()
 
-        persistence.commit_results.assert_called_once()
+        persistence.save_scan.assert_called()
+        self.assertEqual(
+            persistence.save_scan.call_args.kwargs["state"],
+            "completed",
+        )
+        self.assertEqual(
+            persistence.save_scan.call_args.kwargs["assets"],
+            ("lab.example.test",),
+        )

@@ -160,6 +160,13 @@ def engine_status():
     return jsonify(_client().request("GET", "/api/v1/engine/status", timeout=6.0))
 
 
+@engine_api.get("/engine/readiness")
+def engine_readiness():
+    return jsonify(
+        _client().request("GET", "/api/v1/engine/readiness", timeout=6.0)
+    )
+
+
 @engine_api.get("/engine/scopes")
 def engine_scopes():
     return jsonify(_client().request("GET", "/api/v1/recon/scopes", timeout=6.0))
@@ -186,6 +193,11 @@ def create_engine_scope():
     return jsonify(
         _client().request("POST", "/api/v1/recon/scopes", fields, timeout=8.0)
     ), 201
+
+
+@engine_api.get("/engine/scans")
+def engine_scans():
+    return jsonify(_client().request("GET", "/api/v1/recon/scans", timeout=6.0))
 
 
 @engine_api.post("/engine/scans")

@@ -22,6 +22,7 @@ export type EngineStatus = {
   service: string;
   mode: string;
   time: string;
+  storage?: string;
   adapters: string[];
   profiles: string[];
   scopes: number;
@@ -39,7 +40,42 @@ export type EngineStatus = {
     detector: string;
     piiScanner: boolean;
     upstreamConfigured: boolean;
+    inspectionRequests?: number;
+    unblockedRequests?: number;
   };
+  readiness?: {
+    score: number | null;
+    band: string | null;
+    coverage: number;
+    status: string;
+  };
+};
+
+export type Readiness = {
+  formulaVersion: string;
+  score: number | null;
+  band: string | null;
+  coverage: number;
+  unknownComponents: string[];
+  components: Array<{
+    name: string;
+    value: number | null;
+    numerator: number;
+    denominator: number;
+    status: string;
+  }>;
+  inputs: {
+    assets: number;
+    services: number;
+    exposedServices: number;
+    intelFacts: number;
+    findings: number;
+    uncertainMatches: number;
+    guardRequests: number;
+    unblockedAttacks: number;
+    nvdLoaded: boolean;
+  };
+  readiness: string;
 };
 
 export type EngineScope = {
@@ -49,6 +85,14 @@ export type EngineScope = {
   profiles: string[];
   approved: boolean;
   expiresAt: string;
+};
+
+export type EngineScan = {
+  scanId: string;
+  scopeId: string;
+  target: string;
+  profileId: string;
+  state: ScanState | string;
 };
 
 export type ScanState =

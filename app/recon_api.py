@@ -1,7 +1,9 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+import logging
 import threading
+from typing import Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -9,8 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .recon import (
     InMemoryReconRepository,
+    NormalizedService,
     ReconEngine,
     ReconError,
+    ReconResult,
     ReconRun,
     ReconRunState,
     Scope,
@@ -18,6 +22,31 @@ from .recon import (
 )
 from .recon_authorization import AuthorizationRegistry, AuthorizationVerificationError
 from .security import AuthorizationError, Principal, require_role
+
+LOGGER = logging.getLogger("zerotrace.recon_api")
+TERMINAL_STATES = {
+    ReconRunState.COMPLETED,
+    ReconRunState.PARTIAL,
+    ReconRunState.FAILED,
+    ReconRunState.TIMED_OUT,
+    ReconRunState.CANCELLED,
+}
+
+
+class QueuePersistence(Protocol):
+    """Durable store contract used by the local live engine."""
+
+    def save_scope(self, scope: Scope) -> None:
+        ...
+
+    def load_scopes(self) -> list[Scope]:
+        ...
+
+    def save_scan(self, **kwargs: object) -> None:
+        ...
+
+    def load_scans(self) -> list[dict[str, object]]:
+        ...
 
 
 class ScanRequest(BaseModel):
@@ -64,7 +93,7 @@ class _QueuedScan:
     target: Target
     profile_id: str
     idempotency_key: str | None
-    state: str = ReconRunState.QUEUED
+    state: ReconRunState = ReconRunState.QUEUED
     run: ReconRun | None = None
 
 
@@ -74,7 +103,8 @@ class ReconQueue:
         engine: ReconEngine,
         repository: InMemoryReconRepository,
         authorization_registry: AuthorizationRegistry | None = None,
-        persistence: object | None = None,
+        persistence: QueuePersistence | None = None,
+        on_scan_complete: Callable[[_QueuedScan], None] | None = None,
     ) -> None:
         self.engine = engine
         self.repository = repository
@@ -82,14 +112,19 @@ class ReconQueue:
         self._scope_authorizations: dict[str, str] = {}
         self.authorization_registry = authorization_registry
         self.persistence = persistence
+        self.on_scan_complete = on_scan_complete
         self._jobs: dict[str, _QueuedScan] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
         self._lock = threading.Lock()
+        if self.persistence is not None:
+            self._restore()
 
     def add_scope(self, scope: Scope, authorization_id: str | None = None) -> None:
         self._scopes[scope.scope_id] = scope
         if authorization_id is not None:
             self._scope_authorizations[scope.scope_id] = authorization_id
+        if self.persistence is not None:
+            self.persistence.save_scope(scope)
 
     def enqueue(
         self,
@@ -121,6 +156,7 @@ class ReconQueue:
                     request_fingerprint,
                     job.scan_id,
                 )
+            self._persist_scan(job)
             return job
 
     def get(self, scan_id: str) -> _QueuedScan | None:
@@ -131,34 +167,20 @@ class ReconQueue:
             if job.state != ReconRunState.QUEUED:
                 continue
             job.state = ReconRunState.RUNNING
+            self._persist_scan(job)
             job.run = self.engine.create_run(
                 job.scope,
                 job.target,
                 profile_id=job.profile_id,
                 idempotency_key=job.idempotency_key,
             )
-            if self.persistence is not None and job.run.state in {
-                ReconRunState.COMPLETED,
-                ReconRunState.PARTIAL,
-                ReconRunState.FAILED,
-                ReconRunState.TIMED_OUT,
-                ReconRunState.CANCELLED,
-            }:
-                result = self.repository.results.get(job.run.run_id)
-                if result is not None:
-                    self.persistence.commit_results(
-                        job.run.run_id,
-                        job.scope.scope_id,
-                        job.run.state.value,
-                        result.assets,
-                        tuple(
-                            (service.asset, service.protocol, service.port, service.product or "unknown")
-                            for service in result.services
-                        ),
-                        job.run.warnings,
-                        result.inventory_delta,
-                    )
             job.state = job.run.state
+            self._persist_scan(job)
+            if job.state in TERMINAL_STATES and self.on_scan_complete is not None:
+                try:
+                    self.on_scan_complete(job)
+                except Exception:  # pragma: no cover - keep the worker alive
+                    LOGGER.exception("scan completion hook failed")
 
     def cancel(self, scan_id: str) -> _QueuedScan:
         job = self._jobs.get(scan_id)
@@ -166,7 +188,128 @@ class ReconQueue:
             raise KeyError(scan_id)
         if job.state == ReconRunState.QUEUED:
             job.state = ReconRunState.CANCELLED
+            self._persist_scan(job)
         return job
+
+    def _persist_scan(self, job: _QueuedScan) -> None:
+        if self.persistence is None:
+            return
+        result = (
+            self.repository.results.get(job.run.run_id)
+            if job.run is not None
+            else None
+        )
+        self.persistence.save_scan(
+            scan_id=job.scan_id,
+            run_id=None if job.run is None else job.run.run_id,
+            scope_id=job.scope.scope_id,
+            target=job.target.value,
+            profile_id=job.profile_id,
+            state=str(job.state),
+            warnings=() if job.run is None else job.run.warnings,
+            assets=() if result is None else result.assets,
+            services=(
+                ()
+                if result is None
+                else tuple(
+                    {
+                        "asset": service.asset,
+                        "protocol": service.protocol,
+                        "port": service.port,
+                        "product": service.product,
+                        "version": service.version,
+                        "tlsStatus": service.tls_status,
+                    }
+                    for service in result.services
+                )
+            ),
+            tls_findings=(
+                () if result is None else tuple(dict(item) for item in result.tls_findings)
+            ),
+        )
+
+    def _restore(self) -> None:
+        assert self.persistence is not None
+        for scope in self.persistence.load_scopes():
+            self._scopes[scope.scope_id] = scope
+        for row in self.persistence.load_scans():
+            scope_id = str(row["scopeId"])
+            scope = self._scopes.get(scope_id)
+            if scope is None:
+                LOGGER.warning("ignoring persisted scan with unknown scope %s", scope_id)
+                continue
+            target = Target(str(row["target"]), "domain")
+            state = ReconRunState(str(row["state"]))
+            job = _QueuedScan(
+                scan_id=str(row["scanId"]),
+                scope=scope,
+                target=target,
+                profile_id=str(row["profileId"]),
+                idempotency_key=None,
+                state=state,
+            )
+            run_id = row.get("runId")
+            warnings = tuple(str(item) for item in row.get("warnings", []))
+            if run_id is not None:
+                run = ReconRun(
+                    run_id=str(run_id),
+                    scope_id=scope.scope_id,
+                    profile_id=job.profile_id,
+                    target=target,
+                    state=state,
+                    warnings=warnings,
+                )
+                job.run = run
+                self.repository.runs[run.run_id] = run
+                services = tuple(
+                    NormalizedService(
+                        asset=str(item["asset"]),
+                        protocol=str(item["protocol"]),
+                        port=int(item["port"]),  # type: ignore[arg-type]
+                        product=(
+                            None
+                            if item.get("product") is None
+                            else str(item["product"])
+                        ),
+                        version=(
+                            None
+                            if item.get("version") is None
+                            else str(item["version"])
+                        ),
+                        tls_status=(
+                            None
+                            if item.get("tlsStatus") is None
+                            else str(item["tlsStatus"])
+                        ),
+                    )
+                    for item in row.get("services", [])
+                    if isinstance(item, dict)
+                )
+                result = ReconResult(
+                    assets=tuple(str(item) for item in row.get("assets", [])),
+                    services=services,
+                    tls_findings=tuple(
+                        dict(item)
+                        for item in row.get("tlsFindings", [])
+                        if isinstance(item, dict)
+                    ),
+                )
+                self.repository.results[run.run_id] = result
+                self.repository.latest_results[
+                    (scope.scope_id, target.value, job.profile_id)
+                ] = result
+            if state in {ReconRunState.QUEUED, ReconRunState.RUNNING}:
+                warning = "engine restarted before the scan completed"
+                if job.run is not None:
+                    job.run = replace(
+                        job.run,
+                        state=ReconRunState.FAILED,
+                        warnings=job.run.warnings + (warning,),
+                    )
+                    self.repository.runs[job.run.run_id] = job.run
+                job.state = ReconRunState.FAILED
+                self._persist_scan(job)
+            self._jobs[job.scan_id] = job
 
     def _new_scan_id(self) -> str:
         from uuid import uuid4

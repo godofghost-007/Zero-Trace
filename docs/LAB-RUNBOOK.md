@@ -93,6 +93,16 @@ Then create a scan run with one of the fixed profiles:
 - `service_inventory_v1` — Nmap top-100 TCP connect
 - `tls_metadata_v1` — TLS certificate inspection
 
+## Current host limitation
+
+The default live-engine TLS adapter performs its single read on port **443**,
+while this Compose file publishes the TLS container on host port **8443**. The
+host also does not currently have `nmap` or `subfinder` installed. For the
+recorded 2026-10-21 demo evaluation, the live console used the deterministic
+`synthetic_inventory_v1` profile and did not claim a real scanner run. Use the
+synthetic profile for a reproducible evaluation, or remap the lab and install
+the scanner binaries before claiming real scanner evidence.
+
 ## Step 4: Verify Scanner Execution
 
 The P6-LAB evidence must record:

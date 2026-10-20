@@ -115,6 +115,90 @@ def test_engine_proxy_forwards_only_allowed_fields(client, monkeypatch):
     )]
 
 
+def test_engine_intel_ingest_only_allows_kev(client, monkeypatch):
+    calls = []
+
+    def fake_request(self, method, path, payload=None, **kwargs):
+        calls.append((method, path, payload, kwargs))
+        return {
+            "ingestionId": "ing-1",
+            "state": "completed",
+            "factCount": 1748,
+        }
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.request", fake_request
+    )
+
+    rejected = client.post(
+        "/api/v1/engine/intel/ingest", json={"source": "nvd"}
+    )
+    assert rejected.status_code == 400
+    assert calls == []
+
+    accepted = client.post(
+        "/api/v1/engine/intel/ingest", json={"source": "kev"}
+    )
+    assert accepted.status_code == 202
+    assert accepted.json["factCount"] == 1748
+    assert calls[0][0:3] == (
+        "POST",
+        "/api/v1/intel/ingestions",
+        {"source": "kev"},
+    )
+    assert calls[0][3]["extra_headers"]["Idempotency-Key"]
+
+
+def test_engine_scans_forwards_the_persisted_scan_list(client, monkeypatch):
+    calls = []
+
+    def fake_request(self, method, path, payload=None, **kwargs):
+        calls.append((method, path, payload))
+        return {
+            "items": [
+                {
+                    "scanId": "scan-1",
+                    "scopeId": "scope-1",
+                    "target": "lab.example.test",
+                    "profileId": "synthetic_inventory_v1",
+                    "state": "completed",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.request", fake_request
+    )
+    response = client.get("/api/v1/engine/scans")
+    assert response.status_code == 200
+    assert response.json["items"][0]["scanId"] == "scan-1"
+    assert calls == [("GET", "/api/v1/recon/scans", None)]
+
+
+def test_engine_readiness_forwards_the_engine_result(client, monkeypatch):
+    calls = []
+
+    def fake_request(self, method, path, payload=None, **kwargs):
+        calls.append((method, path, payload))
+        return {
+            "score": None,
+            "band": None,
+            "coverage": 33.33,
+            "unknownComponents": ["VUI", "AIET"],
+            "components": [],
+            "inputs": {},
+            "readiness": "incomplete",
+        }
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.request", fake_request
+    )
+    response = client.get("/api/v1/engine/readiness")
+    assert response.status_code == 200
+    assert response.json["readiness"] == "incomplete"
+    assert calls == [("GET", "/api/v1/engine/readiness", None)]
+
+
 def test_engine_test_reports_a_safe_failure(client, monkeypatch):
     def failing_request(self, method, path, payload=None, *, timeout=10.0):
         raise EngineError("Live engine is unreachable.", 502)

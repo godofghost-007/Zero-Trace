@@ -1,80 +1,111 @@
-# ZeroTrace — Flask-Connected Local Demo
+# ZeroTrace Dashboard
 
-A five-view React dashboard connected to a local Flask API. The backend persists the shared Recon → Intel → Guard fixture flow, readiness snapshots, event outbox, and Guard audit metadata. Security engines deliberately use fixed sample data; this is not yet a real scanner, vulnerability-feed service, classifier, or LLM proxy.
+React + Vite dashboard for the local ZeroTrace demo, served with a Flask BFF.
+The browser only calls same-origin `/api/v1/*` routes. Flask keeps the live
+engine API key on the server and forwards to a loopback-only FastAPI process.
 
-## Run on a laptop
+## Pages
 
-### Docker Compose (PostgreSQL + Valkey + Flask + UI)
+| Route | Source | Purpose |
+|---|---|---|
+| `/` | Fixtures | Architecture and the three-module story |
+| `/database` | Fixtures | Database, event outbox, and readiness pipeline |
+| `/recon` | Fixtures | Recon inventory and TLS metadata walkthrough |
+| `/intel` | Fixtures | Intel correlation and prioritization walkthrough |
+| `/guard` | Fixtures | Guard prompt-injection/PII walkthrough |
+| `/targets` | **Live engine** | Approved scope and scan console, readiness components |
+| `/settings` | **Live engine** | Loopback connection settings and test |
 
-Prerequisites: Docker Desktop (or Docker Engine with Compose) and enough available RAM for the chosen services.
+The fixture pages are deterministic demo views. `Targets & Scope` and `Engine
+Settings` are the live console. The UI exposes CISA KEV ingestion only; NVD and
+EPSS remain API-only.
 
-```bash
-cp .env.example .env
-# Set POSTGRES_PASSWORD in .env to a unique local value before starting.
-docker compose up --build
+## Run
+
+From the repository root:
+
+```powershell
+.\run-live-demo.ps1
 ```
 
-Open `http://localhost:3000`. The app is bound to `127.0.0.1`; PostgreSQL and Valkey ports are internal to the Compose network. Named volumes preserve the database, event stream and SQLite audit file between restarts. The Compose stack targets PostgreSQL plus Valkey; it does not start scanners or an inference model.
+Open <http://127.0.0.1:3000/>. The script starts the loopback engine and the
+Flask BFF.
 
-### Host development (SQLite + Vite)
+Or manually:
 
-In terminal 1, create and activate a Python virtual environment, then install backend dependencies:
+```powershell
+# Terminal 1 (repository root)
+.\.venv\Scripts\python.exe -m scripts.live_engine
 
-```bash
-python -m venv .venv
-# macOS/Linux: source .venv/bin/activate
-# Windows PowerShell: .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-flask --app backend:create_app run --host=127.0.0.1 --port=5000
+# Terminal 2
+Set-Location frontend
+..\.venv\Scripts\python.exe -m flask --app backend:create_app run `
+  --host=127.0.0.1 --port=3000 --no-reload
 ```
 
-In terminal 2:
+For Vite development with hot reload:
 
-```bash
-pnpm install
+```powershell
+# Terminal 1
+..\.venv\Scripts\python.exe -m flask --app backend:create_app run `
+  --host=127.0.0.1 --port=5000 --no-reload
+
+# Terminal 2
 pnpm dev
 ```
 
-Vite serves the UI on port 3000 and proxies relative `/api/v1/*` requests to Flask on `127.0.0.1:5000`. Host development defaults to SQLite files under `instance/`; no Valkey is required, so outbox events remain visibly `pending`. To test Redis/Valkey publication use Compose.
+Open <http://127.0.0.1:3000/>. Vite proxies `/api/v1` to Flask on
+`127.0.0.1:5000`; see `vite.config.ts`.
 
-On Windows, the `pnpm dev` script's `${PORT:-3000}` placeholder is not expanded by `cmd.exe`. Use the explicit command instead (with Flask still running on port 5000):
+## Live engine settings
+
+The BFF persists non-secret connection settings in
+`frontend/instance/engine-settings.json` (gitignored). The API key is never
+returned to the browser; only `apiKeyConfigured` and a hint are exposed.
+
+Defaults:
+
+- Engine URL: `http://127.0.0.1:8765`
+- BFF URL: `http://127.0.0.1:3000`
+- Engine state: `data/live-engine.sqlite3` (override with `ZEROTRACE_LIVE_DB`)
+
+The engine URL must resolve to a loopback host. Scope and scan creation require
+an explicit `authorized: true` acknowledgement in both layers.
+
+## Security model
+
+- Same-origin browser requests with the existing origin/CSRF checks.
+- Server-side engine key custody.
+- Loopback-only engine URL validation.
+- Allowlisted request fields and response size limits.
+- No upstream model call for Guard inspection.
+- No exploitation, brute force, or automatic remediation.
+
+This is a single-operator demo, not a production console. There is no
+login/RBAC or multi-tenant isolation.
+
+## Tests and checks
 
 ```powershell
-pnpm exec vite --host 127.0.0.1 --port 3000 --strictPort
+pnpm exec tsc --noEmit
+pnpm test
+pnpm build
+..\.venv\Scripts\python.exe -m pytest -q backend\tests
 ```
 
-Alternatively, serve the built UI and the API from one Flask origin:
+The BFF tests cover the engine settings, loopback validation, authorization,
+forwarding, and safe error handling. The live-engine persistence tests are in
+the repository root at `tests/test_live_engine_persistence.py`.
+
+## Docker
+
+`compose.yaml` runs Flask with PostgreSQL and Valkey:
 
 ```powershell
-.\run-local.ps1
+Copy-Item .env.example .env
+# Set a unique local POSTGRES_PASSWORD.
+docker compose up --build
 ```
 
-Open `http://127.0.0.1:3000/`. The script creates `.venv` when needed, installs the pinned host dependencies, builds `dist/public` when missing, and runs Flask on port 3000.
-
-## Checks
-
-```bash
-# Python integration tests (activate .venv first)
-python -m pytest -q backend/tests
-
-# Existing frontend type-check, tests, and static asset build
-pnpm check && pnpm test && pnpm build
-```
-
-`pnpm build` emits the UI to `dist/public/`. The container image builds the frontend and serves it with Flask/Gunicorn on port 3000; production-like serving is provided by Docker Compose, not `pnpm start` alone.
-
-## What is connected, and what is not
-
-- **Connected:** every page reads Flask-backed state; engine actions persist synthetic records in SQLite for host development or PostgreSQL in Compose; a PostgreSQL transactional outbox relays events to Valkey Streams when configured; Guard writes/verifies a separate SQLite SHA-256 chain.
-- **Fixture-only:** Recon does not run Subfinder/Nmap or make DNS/TLS/S3 requests. Intel does not fetch NVD/EPSS/KEV or run XGBoost/Ollama. Guard does not accept real API keys, load ONNX, proxy an upstream model, or scan a model response. No prompt text is sent to Flask.
-- **Not production-ready:** there is no login/RBAC/CSRF protection, schema migration system, real workers/consumers, external feed integration, executable remediation, or hardened audit backup. Keep this demo local and use only the bundled synthetic records.
-
-The demo reset button clears this application's scenario tables and Guard audit rows in the configured local data store. Do not point it at non-demo data. `docker compose down -v` deletes all Compose volumes and is destructive to persisted demo data.
-
-The approximately 9 GB memory figure remains a project target, not a measurement. Readiness indexes with zero denominators remain unknown; the documented combined-case arithmetic discrepancy is retained in the UI and docs.
-
-## Documentation
-
-- [Page and engine connectivity map](docs/01-page-and-engine-connectivity.md)
-- [Backend connectivity and API contract](docs/02-backend-connectivity.md)
-- [Project implementation plan](plan.md)
+The live engine is not started by this Compose stack; run it separately on the
+host when you want the Targets console in live mode.

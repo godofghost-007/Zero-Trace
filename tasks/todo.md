@@ -221,10 +221,10 @@
 
 | ID | Task | Status | Dependencies |
 |---|---|---|---|
-| P13-DESIGN-TOKENS | Open Design CSS custom properties (colors, spacing, animation) | Verified | P12-EVIDENCE |
-| P13-API | FastAPI dashboard routes (assets, findings, readiness, guard-events) | Verified | P13-DESIGN-TOKENS |
-| P13-SECURITY | Security headers, auth, generic error envelopes | Verified | P13-API |
-| P13-CLI | Dashboard CLI commands (dual-track) | Verified | P13-API |
+| P13-DESIGN-TOKENS | React design tokens and shared console primitives | Verified | P12-EVIDENCE |
+| P13-API | Flask BFF routes and React pages for Recon, Intel, Guard, Targets, and Settings | Verified | P13-DESIGN-TOKENS |
+| P13-SECURITY | Server-side API-key custody, loopback-only engine URL, CSRF/origin checks, security headers | Verified | P13-API |
+| P13-CLI | Standalone dashboard CLI | Removed (superseded; see ADR-008) | P13-API |
 | P13-INTEGRATION | Recon → Intel → Guard → Readiness data flow | Verified | P13-SECURITY |
 | P13-EVIDENCE | Record Phase 13 evidence and human signoff | Verified | P13-INTEGRATION |
 

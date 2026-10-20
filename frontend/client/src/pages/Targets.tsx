@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ArrowRight, Ban, CheckCircle2, Crosshair, FileText, Globe2, RefreshCcw, ScanLine, ShieldCheck, TriangleAlert } from "lucide-react";
+import { ArrowRight, Ban, CheckCircle2, Crosshair, FileText, Gauge, Globe2, RefreshCcw, ScanLine, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "wouter";
 import { CodeLabel, PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
 import { apiRequest, useApiResource } from "@/lib/api";
@@ -9,9 +9,11 @@ import {
   normalizeTarget,
   scanTone,
   scopeIdFor,
+  type EngineScan,
   type EngineScope,
   type EngineStatus,
   type GuardInspection,
+  type Readiness,
   type ScanResult,
   type ScanStatus,
 } from "@/lib/liveEngine";
@@ -25,6 +27,8 @@ export default function Targets() {
   const [refresh, setRefresh] = useState(0);
   const statusQuery = useApiResource<EngineStatus>("/engine/status", refresh);
   const scopesQuery = useApiResource<{ items: EngineScope[] }>("/engine/scopes", refresh);
+  const readinessQuery = useApiResource<Readiness>("/engine/readiness", refresh);
+  const scansQuery = useApiResource<{ items: EngineScan[] }>("/engine/scans", refresh);
   const status = statusQuery.data;
   const profiles = status?.profiles ?? [];
   const defaultProfile = profiles.includes("tls_metadata_v1")
@@ -89,6 +93,21 @@ export default function Targets() {
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [scanId]);
+
+  useEffect(() => {
+    if (scanId) return;
+    const items = scansQuery.data?.items;
+    if (!items || items.length === 0) return;
+    const latest = items[items.length - 1];
+    setScanId(latest.scanId);
+    setScanStatus({ scanId: latest.scanId, state: latest.state });
+    setLastRun({
+      scopeId: latest.scopeId,
+      target: latest.target,
+      profileId: latest.profileId,
+    });
+    setPolling(!TERMINAL_SCAN_STATES.has(latest.state));
+  }, [scanId, scansQuery.data]);
 
   const onTargetChange = (value: string) => {
     setTarget(value);
@@ -207,6 +226,7 @@ export default function Targets() {
         body: JSON.stringify({ text: guardText }),
       });
       setGuardResult(result);
+      setRefresh((value) => value + 1);
     } catch (reason) {
       setGuardError(messageOf(reason));
     } finally {
@@ -244,6 +264,30 @@ export default function Targets() {
       <div className="engine-summary"><span>SCOPES</span><b>{status?.scopes ?? "—"}</b><small>Operator-approved targets</small></div>
       <div className="engine-summary"><span>SCANS</span><b>{status?.scans ?? "—"}</b><small>Queued + completed in this process</small></div>
     </div>
+
+    <Panel
+      title="Operational readiness"
+      subtitle="Recomputed from the persisted Recon inventory, Intel findings, Guard inspections, and engine state. Missing inputs stay unknown instead of being treated as zero."
+      tag={readinessQuery.data?.band?.toUpperCase() ?? "WAITING FOR INPUTS"}
+    >
+      {readinessQuery.error && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{readinessQuery.error}</span></div>}
+      {readinessQuery.data ? <>
+        <div className="result-grid">
+          <div className="result-card"><span>SCORE</span><b>{readinessQuery.data.score ?? "UNKNOWN"}</b><small>{readinessQuery.data.band ?? "Not enough complete traces"}</small></div>
+          <div className="result-card"><span>COVERAGE</span><b>{readinessQuery.data.coverage.toFixed(1)}%</b><small>{readinessQuery.data.unknownComponents.length ? `Unknown: ${readinessQuery.data.unknownComponents.join(", ")}` : "All components known"}</small></div>
+          <div className="result-card"><span>ASSETS / SERVICES</span><b>{readinessQuery.data.inputs.assets} / {readinessQuery.data.inputs.services}</b><small>{readinessQuery.data.inputs.exposedServices} exposed service(s)</small></div>
+        </div>
+        <div className="kv-list">
+          {readinessQuery.data.components.map((component) => <div className="kv-row" key={component.name}>
+            <span>{component.name}</span>
+            <b>{component.value === null ? "UNKNOWN" : `${component.value.toFixed(2)}%`} — {component.status}</b>
+          </div>)}
+          <div className="kv-row"><span>INTEL</span><b>{readinessQuery.data.inputs.intelFacts} facts — {readinessQuery.data.inputs.findings} finding(s) — {readinessQuery.data.inputs.uncertainMatches} uncertain</b></div>
+          <div className="kv-row"><span>GUARD</span><b>{readinessQuery.data.inputs.guardRequests} inspection(s) — {readinessQuery.data.inputs.unblockedAttacks} unblocked</b></div>
+        </div>
+        {!readinessQuery.data.inputs.nvdLoaded && <div className="small-warning"><FileText size={15} /><span>The VUI component stays unknown until NVD facts are loaded through the engine&apos;s API-only ingestion endpoint and matched to persisted Recon services.</span></div>}
+      </> : <div className="empty-console"><Gauge size={22} /><b>{readinessQuery.loading ? "Calculating readiness" : "Readiness is unavailable"}</b><p>The engine returns a component-by-component result, including unknown inputs.</p></div>}
+    </Panel>
 
     <div className="two-column">
       <Panel title="Add an authorized target" subtitle="The scope is created first; the scan can only use a target inside it." tag="OPERATOR ACTION">

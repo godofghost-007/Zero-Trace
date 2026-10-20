@@ -42,6 +42,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.guard import PIIScanner, PromptInjectionDetector  # noqa: E402
+from app.integration import IntegratedReadinessState  # noqa: E402
+from app.intel import ServiceDescriptor, correlate_service  # noqa: E402
 from app.intel_api import (  # noqa: E402
     InMemoryIntelRepository,
     create_intel_app,
@@ -54,10 +56,12 @@ from app.intel_feeds import (  # noqa: E402
     RetryingFeedTransport,
     UrllibFeedTransport,
 )
+from app.live_store import LiveStore  # noqa: E402
 from app.recon import (  # noqa: E402
     AdapterResult,
     InMemoryReconRepository,
     NmapAdapter,
+    NormalizedService,
     PROFILES,
     ReconEngine,
     ReconError,
@@ -78,6 +82,175 @@ from app.security import (  # noqa: E402
 LOGGER = logging.getLogger("zerotrace.live_engine")
 DEFAULT_API_KEY = "sk-zerotrace-local-engine-7f3c9a2b"
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+WEB_PORTS = {80, 443, 8080, 8081, 8443}
+VENDOR_BY_PRODUCT = {
+    "nginx": ("nginx", "nginx"),
+    "apache": ("apache", "http_server"),
+    "apache httpd": ("apache", "http_server"),
+    "httpd": ("apache", "http_server"),
+    "iis": ("microsoft", "internet_information_services"),
+    "microsoft-iis": ("microsoft", "internet_information_services"),
+    "openssh": ("openbsd", "openssh"),
+    "openbsd": ("openbsd", "openssh"),
+    "postgresql": ("postgresql", "postgresql"),
+    "mysql": ("oracle", "mysql"),
+    "mariadb": ("mariadb", "mariadb"),
+    "openssl": ("openssl", "openssl"),
+}
+
+
+def _database_path() -> Path:
+    configured = os.environ.get("ZEROTRACE_LIVE_DB", "")
+    return (
+        Path(configured).expanduser()
+        if configured
+        else ROOT / "data" / "live-engine.sqlite3"
+    )
+
+
+def _is_exposed(service: NormalizedService) -> bool:
+    product = (service.product or "").lower()
+    return service.port in WEB_PORTS or any(
+        marker in product for marker in ("http", "https", "tls", "ssl")
+    )
+
+
+def _service_descriptor(
+    scope_id: str, service: NormalizedService
+) -> ServiceDescriptor | None:
+    raw_product = (service.product or "").strip().lower()
+    if not raw_product:
+        return None
+    vendor, product = VENDOR_BY_PRODUCT.get(
+        raw_product, (raw_product.split()[0], raw_product)
+    )
+    return ServiceDescriptor(
+        service_id=(
+            f"{scope_id}:{service.asset}:{service.protocol}:{service.port}"
+        ),
+        asset_id=service.asset,
+        product=product,
+        vendor=vendor,
+        version=service.version,
+        cpe=None,
+        exposed=_is_exposed(service),
+    )
+
+
+def _correlate_repository(repository: InMemoryIntelRepository) -> None:
+    """Rebuild deterministic findings from persisted services and facts."""
+
+    findings: dict[str, object] = {}
+    uncertain: list[object] = []
+    facts = [
+        fact for fact in repository.facts.values() if fact.cpe_names
+    ]
+    for service in sorted(
+        repository.services.values(), key=lambda item: item.service_id
+    ):
+        for fact in sorted(facts, key=lambda item: item.cve_id):
+            outcome = correlate_service(service, fact)
+            if outcome.finding is not None:
+                findings[
+                    f"{service.service_id}:{fact.cve_id}"
+                ] = outcome.finding
+            elif outcome.uncertain is not None:
+                uncertain.append(outcome.uncertain)
+    repository.replace_findings(findings, uncertain)
+
+
+def _sync_scan_services(
+    queue: ReconQueue, repository: InMemoryIntelRepository
+) -> None:
+    for job in queue._jobs.values():
+        if job.run is None:
+            continue
+        result = queue.repository.results.get(job.run.run_id)
+        if result is None:
+            continue
+        for service in result.services:
+            descriptor = _service_descriptor(job.scope.scope_id, service)
+            if descriptor is not None:
+                repository.add_service(descriptor)
+    _correlate_repository(repository)
+
+
+def _readiness_payload(
+    queue: ReconQueue,
+    repository: InMemoryIntelRepository,
+    store: LiveStore,
+    *,
+    persist: bool = False,
+) -> dict[str, object]:
+    assets: set[str] = set()
+    services: dict[tuple[str, str, int], NormalizedService] = {}
+    for job in queue._jobs.values():
+        if job.run is None:
+            continue
+        result = queue.repository.results.get(job.run.run_id)
+        if result is None:
+            continue
+        assets.update(result.assets)
+        for service in result.services:
+            assets.add(service.asset)
+            services[(service.asset, service.protocol, service.port)] = service
+
+    findings = list(repository.findings.values())
+    nvd_loaded = any(
+        fact.source == "nvd" for fact in repository.facts.values()
+    )
+    intel_complete = nvd_loaded and all(
+        not finding.priority.missing for finding in findings
+    )
+    guard = store.guard_counts()
+    state = IntegratedReadinessState()
+    state.record_recon(
+        assets=assets,
+        total_services=len(services),
+        exposed_services=sum(
+            1 for service in services.values() if _is_exposed(service)
+        ),
+    )
+    state.record_findings(findings)
+    state.intel_complete = intel_complete
+    state.total_requests = guard["total"]
+    state.unblocked_attacks = guard["unblocked"]
+    result = state.calculate()
+    payload: dict[str, object] = {
+        "formulaVersion": result.formula_version,
+        "score": result.score,
+        "band": result.band,
+        "coverage": result.coverage,
+        "unknownComponents": list(result.unknown_components),
+        "components": [
+            {
+                "name": component.name,
+                "value": component.value,
+                "numerator": component.numerator,
+                "denominator": component.denominator,
+                "status": component.status,
+            }
+            for component in result.components
+        ],
+        "inputs": {
+            "assets": len(assets),
+            "services": len(services),
+            "exposedServices": sum(
+                1 for service in services.values() if _is_exposed(service)
+            ),
+            "intelFacts": len(repository.facts),
+            "findings": len(findings),
+            "uncertainMatches": len(repository.uncertain_matches),
+            "guardRequests": guard["total"],
+            "unblockedAttacks": guard["unblocked"],
+            "nvdLoaded": nvd_loaded,
+        },
+        "readiness": "known" if result.score is not None else "incomplete",
+    }
+    if persist:
+        store.save_readiness(payload)
+    return payload
+
 
 
 @dataclass(frozen=True)
@@ -148,14 +321,51 @@ def _dns_resolver(host: str) -> tuple[str, ...]:
     return tuple(socket.gethostbyname_ex(host)[2])
 
 
-def create_live_engine(settings: EngineSettings) -> FastAPI:
+def create_live_engine(
+    settings: EngineSettings,
+    *,
+    store: LiveStore | None = None,
+    feed_transport: object | None = None,
+) -> FastAPI:
     repository = InMemoryReconRepository()
     adapters = _configured_adapters()
     engine = ReconEngine(repository, adapters, dns_resolver=_dns_resolver)
-    queue = ReconQueue(engine, repository)
+    store = store or LiveStore(_database_path())
 
     intel_repository = InMemoryIntelRepository()
-    feed_transport = RetryingFeedTransport(UrllibFeedTransport())
+    transport = feed_transport or RetryingFeedTransport(UrllibFeedTransport())
+
+    def persist_intel() -> None:
+        store.save_intel_state(
+            facts=intel_repository.facts.values(),
+            epss_records=intel_repository.epss_records,
+            kev_records=intel_repository.kev_records,
+            ingestions=intel_repository.ingestions,
+            idempotency=intel_repository.idempotency,
+        )
+
+    intel_repository.on_change = persist_intel
+    persisted = store.load_intel_state()
+    intel_repository.hydrate(
+        facts=persisted["facts"],  # type: ignore[arg-type]
+        epss_records=persisted["epss"],  # type: ignore[arg-type]
+        kev_records=persisted["kev"],  # type: ignore[arg-type]
+        ingestions=persisted["ingestions"],  # type: ignore[arg-type]
+        idempotency=persisted["idempotency"],  # type: ignore[arg-type]
+    )
+
+    def scan_completed(job: object) -> None:
+        _sync_scan_services(queue, intel_repository)
+        intel_repository.notify_change()
+
+    queue = ReconQueue(
+        engine,
+        repository,
+        persistence=store,
+        on_scan_complete=scan_completed,
+    )
+    _sync_scan_services(queue, intel_repository)
+    persist_intel()
 
     auth_config = AuthConfig(settings.auth_secret, settings.auth_secret)
     expected_digest = auth_config.api_key_digest(settings.api_key)
@@ -194,7 +404,7 @@ def create_live_engine(settings: EngineSettings) -> FastAPI:
     app = FastAPI(title="ZeroTrace live engine", lifespan=lifespan)
 
     recon_app = create_recon_app(queue, principal_provider)
-    intel_app = create_intel_app(intel_repository, principal_provider, feed_transport)
+    intel_app = create_intel_app(intel_repository, principal_provider, transport)
     app.router.routes.extend(recon_app.routes)
     app.router.routes.extend(intel_app.routes)
 
@@ -247,12 +457,14 @@ def create_live_engine(settings: EngineSettings) -> FastAPI:
 
     @app.get("/ready")
     async def ready() -> dict[str, object]:
+        storage_ok = store.ping()
         return {
-            "status": "ready",
+            "status": "ready" if storage_ok else "degraded",
             "checks": {
                 "recon": "ok",
                 "intel": "ok",
                 "guard": "ok",
+                "storage": "ok" if storage_ok else "degraded",
                 "worker": "stopped" if stop_worker.is_set() else "running",
             },
         }
@@ -270,10 +482,13 @@ def create_live_engine(settings: EngineSettings) -> FastAPI:
             for job in queue._jobs.values()
             if job.scope.owner_id == current.subject
         ]
+        guard = store.guard_counts()
+        readiness = _readiness_payload(queue, intel_repository, store)
         return {
             "service": "zerotrace-live-engine",
             "mode": "live",
             "time": datetime.now(timezone.utc).isoformat(),
+            "storage": "sqlite",
             "adapters": sorted(adapters.keys()),
             "profiles": sorted(
                 profile_id
@@ -286,6 +501,8 @@ def create_live_engine(settings: EngineSettings) -> FastAPI:
                 "facts": len(intel_repository.facts),
                 "findings": len(intel_repository.findings),
                 "uncertainMatches": len(intel_repository.uncertain_matches),
+                "kevRecords": len(intel_repository.kev_records),
+                "epssRecords": len(intel_repository.epss_records),
                 "feeds": {
                     "nvd": NVD_ENDPOINT,
                     "epss": EPSS_ENDPOINT,
@@ -297,8 +514,39 @@ def create_live_engine(settings: EngineSettings) -> FastAPI:
                 "detector": "regex-heuristic-v1",
                 "piiScanner": True,
                 "upstreamConfigured": False,
+                "inspectionRequests": guard["total"],
+                "unblockedRequests": guard["unblocked"],
+            },
+            "readiness": {
+                "score": readiness["score"],
+                "band": readiness["band"],
+                "coverage": readiness["coverage"],
+                "status": readiness["readiness"],
             },
         }
+
+    @app.get("/api/v1/engine/readiness")
+    async def engine_readiness(request: Request) -> dict[str, object]:
+        actor(request, "viewer")
+        return _readiness_payload(
+            queue, intel_repository, store, persist=True
+        )
+
+    @app.get("/api/v1/recon/scans")
+    async def list_scans(request: Request) -> dict[str, object]:
+        current = actor(request, "viewer")
+        items = [
+            {
+                "scanId": job.scan_id,
+                "scopeId": job.scope.scope_id,
+                "target": job.target.value,
+                "profileId": job.profile_id,
+                "state": str(job.state),
+            }
+            for job in queue._jobs.values()
+            if job.scope.owner_id == current.subject
+        ]
+        return {"items": items}
 
     @app.post("/api/v1/guard/inspect")
     async def guard_inspect(
@@ -307,6 +555,11 @@ def create_live_engine(settings: EngineSettings) -> FastAPI:
         actor(request, "viewer")
         prompt = PromptInjectionDetector().scan(payload.text)
         pii = PIIScanner().scan(payload.text)
+        store.record_guard_event(
+            blocked=prompt.blocked,
+            reason=prompt.reason,
+            pii_blocked=pii.blocked,
+        )
         return {
             "blocked": prompt.blocked,
             "reason": prompt.reason,

@@ -1,7 +1,9 @@
 # ADR-007: ZeroTrace Dashboard UI/UX (Phase 13)
 
 ## Status
-Accepted
+Superseded by [ADR-008](ADR-008-dashboard-delivery-correction.md). The
+standalone `app/dashboard/` HTTP server described below was never committed and
+is not part of the current repository.
 
 ## Date
 2026-10-18

@@ -59,9 +59,39 @@ class InMemoryIntelRepository:
         self.kev_records = ()
         self.ingestions: dict[str, Ingestion] = {}
         self.idempotency: dict[str, tuple[str, str]] = {}
+        self.on_change: Callable[[], None] | None = None
 
     def add_service(self, service: ServiceDescriptor) -> None:
         self.services[service.service_id] = service
+
+    def hydrate(
+        self,
+        *,
+        facts: tuple[VulnerabilityFact, ...] = (),
+        epss_records: tuple[object, ...] = (),
+        kev_records: tuple[object, ...] = (),
+        ingestions: dict[str, Ingestion] | None = None,
+        idempotency: dict[str, tuple[str, str]] | None = None,
+    ) -> None:
+        """Restore a previously persisted feed snapshot."""
+
+        self.facts = {fact.cve_id: fact for fact in facts}
+        self.epss_records = tuple(epss_records)
+        self.kev_records = tuple(kev_records)
+        self.ingestions = dict(ingestions or {})
+        self.idempotency = dict(idempotency or {})
+
+    def replace_findings(
+        self,
+        findings: dict[str, object],
+        uncertain_matches: list[object],
+    ) -> None:
+        self.findings = findings
+        self.uncertain_matches = uncertain_matches
+
+    def notify_change(self) -> None:
+        if self.on_change is not None:
+            self.on_change()
 
 
 class IntelPersistence(Protocol):
@@ -164,6 +194,7 @@ def create_intel_app(
             ingestion = Ingestion(ingestion_id, payload.source, "failed", 0, str(error))
         repository.ingestions[ingestion_id] = ingestion
         repository.idempotency[idempotency_key] = (request_hash, ingestion_id)
+        repository.notify_change()
         return {"ingestionId": ingestion_id, "state": ingestion.state, "factCount": ingestion.fact_count}
 
     @app.get("/api/v1/intel/ingestions/{ingestion_id}")

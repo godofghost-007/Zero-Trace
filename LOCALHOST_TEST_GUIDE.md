@@ -1,247 +1,71 @@
-# ZeroTrace Localhost Test Setup — Recon with Nmap/Subfinder
+# Isolated Lab Setup
 
-This guide helps you install nmap and subfinder on Windows, then test ZeroTrace Recon against **localhost only** (your own machine).
+This guide covers the bounded lab path for Recon evaluation. It replaces the
+earlier localhost/Nmap scratch instructions, which assumed binaries that are not
+installed and used a target name that the current domain validator rejects.
 
----
+## What the lab provides
 
-## Step 1: Install Nmap (Manual)
+`compose.lab.yaml` publishes three loopback-only services:
 
-1. Download: https://nmap.org/dist/nmap-7.80-setup.exe
-2. Run the installer as Administrator
-3. During installation, check **"Add to PATH"** if available
-4. Verify: `nmap --version` should show version 7.80
+| Service | Host port | Purpose |
+|---|---|---|
+| `lab-web` (nginx) | `127.0.0.1:8080` | HTTP inventory target |
+| `lab-web-alt` (httpd) | `127.0.0.1:8081` | Second HTTP target |
+| `lab-tls` (nginx TLS) | `127.0.0.1:8443` | TLS metadata target |
 
-**Alternative:** Download directly from https://nmap.org/download.html
+Only loopback addresses are published. Do not change these mappings to
+`0.0.0.0`.
 
----
-
-## Step 2: Install Subfinder (Manual)
-
-Subfinder is not available via winget. Install manually:
-
-1. Go to: https://github.com/projectdiscovery/subfinder/releases
-2. Download the Windows ZIP (e.g., `subfinder-windows-amd64.zip`)
-3. Extract to a folder (e.g., `C:\tools\subfinder\`)
-4. Add that folder to your Windows PATH
-5. Verify: `subfinder --version` should show the version
-
-**Alternative:** Use Go:
-```powershell
-go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-```
-
----
-
-## Step 3: Add Localhost Hosts Entry
-
-Run PowerShell as Administrator:
+## Start the lab
 
 ```powershell
-notepad C:\Windows\System32\drivers\etc\hosts
-```
-
-Add this line:
-```
-127.0.0.1 localhost
-127.0.0.1 lab-web.zerotrace.local
-```
-
-Save and close.
-
-Verify:
-```powershell
-Resolve-DnsName localhost
-Resolve-DnsName lab-web.zerotrace.local
-```
-
----
-
-## Step 4: Start a Local Service for Nmap to Scan
-
-Nmap needs something to scan. Start a simple local web server:
-
-```powershell
-# Option A: Python HTTP server
-python -m http.server 8080
-
-# Option B: If you have the Docker lab running
 docker compose -f compose.lab.yaml up -d
+docker compose -f compose.lab.yaml ps
 ```
 
-The lab provides:
-- `lab-web.zerotrace.local` → port 8080 (nginx)
-- `lab-tls.zerotrace.local` → port 8443 (TLS)
+Add the lab names to your hosts file only if you are running a real scanner:
 
----
-
-## Step 5: Create Authorization and Run Recon Against Localhost
-
-ZeroTrace's test authorization harness accepts `localhost` and `host.docker.internal` domains. Here's the complete test script:
-
-```python
-"""
-Test Recon against localhost using ZeroTrace test authorization.
-Run from: E:\zerotrace-demo
-"""
-
-from datetime import datetime, timedelta, timezone
-from app.security import Principal
-from app.test_authorization import TestOnlyAuthorizationRegistry
-from app.recon import (
-    ReconEngine, ReconRunState, Scope, Target,
-    ReconProfile, PROFILES, SyntheticAdapter, AdapterResult,
-    InMemoryReconRepository
-)
-from app.recon_pg import PostgresReconRepository
-
-
-# --- Step 1: Create test authorization for localhost ---
-
-auth = TestOnlyAuthorizationRegistry(environment="test").authorize(
-    Principal("student-admin", "admin"),
-    code="ZEROTRACE-TEST-ONLY",
-    target="localhost",                          # Your own machine
-    profile_id="service_inventory_v1",           # Nmap profile
-)
-
-print(f"Authorization: {auth.target} -> {auth.profile_ids}")
-print(f"Expires: {auth.expires_at}")
-
-# --- Step 2: Create a scope for localhost ---
-
-scope = Scope(
-    scope_id="scope-localhost",
-    owner_id="student-admin",
-    targets=("localhost",),
-    environment="synthetic",                     # Synthetic = no DNS TXT needed
-    approved=True,
-    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-    profiles=("service_inventory_v1",),
-)
-
-# --- Step 3: Set up Recon engine with a synthetic adapter ---
-
-# Use SyntheticAdapter for testing without real nmap
-# (Replace with real NmapAdapter when nmap is installed)
-adapter = SyntheticAdapter(
-    AdapterResult(
-        assets=("localhost",),
-        services=(("localhost", "tcp", 8080, "http"),),
-        warnings=(),
-    )
-)
-
-repository = InMemoryReconRepository()
-engine = ReconEngine(
-    repository,
-    {"service_inventory_v1": adapter},
-)
-
-# --- Step 4: Run the scan ---
-
-target = Target(value="localhost", kind="domain")
-
-run = engine.create_run(
-    scope,
-    target,
-    profile_id="service_inventory_v1",
-)
-
-print(f"\nScan Result:")
-print(f"  State:       {run.state}")
-print(f"  Target:      {run.target.value}")
-print(f"  Profile:     {run.profile_id}")
-print(f"  Warnings:    {run.warnings}")
-
-# --- Step 5: Check results ---
-
-result = repository.results.get(run.run_id)
-if result:
-    print(f"\nDiscovered Assets: {result.assets}")
-    print(f"Discovered Services:")
-    for svc in result.services:
-        print(f"  - {svc.asset}:{svc.port}/{svc.protocol} ({svc.product})")
-
-print("\n✓ Localhost Recon test complete!")
+```text
+127.0.0.1 lab-web.zerotrace.local
+127.0.0.1 lab-web-alt.zerotrace.local
+127.0.0.1 lab-tls.zerotrace.local
 ```
 
-Save this as `test_localhost_recon.py` and run:
+Editing the hosts file requires Administrator access. Remove the entries when
+you are finished.
+
+## Run the authorized demo flow
+
+1. Start the dashboard and live engine with `.\run-live-demo.ps1`.
+2. Open <http://127.0.0.1:3000/targets>.
+3. Create a scope for a lab name with an explicit authorization
+   acknowledgement. The default profile is `tls_metadata_v1`; use
+   `synthetic_inventory_v1` when no scanner binary is installed.
+4. Run the scan and inspect the normalized result and readiness panel.
+5. Run the CISA KEV sync from the Intel/console flow, then run the Guard
+   jailbreak inspection.
+6. Stop the lab:
 
 ```powershell
-cd E:\zerotrace-demo
-$env:ZEROTRACE_ENV = "test"
-py test_localhost_recon.py
+docker compose -f compose.lab.yaml down
 ```
 
----
+## Current practical limit
 
-## Step 6: Run with Real Nmap (After Installation)
+The host does not have `nmap` or `subfinder` installed. The live demo therefore
+uses the synthetic inventory adapter for deterministic evidence. The TLS
+profile performs a single bounded certificate read when the target resolves and
+trusts the lab certificate; a self-signed lab certificate is reported as
+unreachable rather than silently trusted.
 
-Once nmap is installed, replace the SyntheticAdapter with NmapAdapter:
-
-```python
-from app.recon import NmapAdapter, SubprocessRunner
-
-# Real nmap adapter (only after nmap is installed and in PATH)
-adapter = NmapAdapter(
-    executable="nmap",
-    runner=SubprocessRunner(),
-)
-```
-
-**Important:** NmapAdapter scans the target's IP. For localhost, it will scan your own machine's open ports.
-
----
-
-## Step 7: Run Full Test Suite
-
-To verify the entire ZeroTrace pipeline (Recon → Intel → Patch) works:
+## Verification
 
 ```powershell
-cd E:\zerotrace-demo
-$env:ZEROTRACE_ENV = "development"
-py -m unittest discover -s tests -v
+frontend\.venv\Scripts\python.exe -m pytest -q
+frontend\.venv\Scripts\python.exe -m pytest -q frontend\backend\tests
+Set-Location frontend; pnpm exec tsc --noEmit; pnpm test; pnpm build
 ```
 
-This runs **145 tests** covering all phases including Recon, Intel, correlation, prioritization, and remediation proposals.
-
----
-
-## Security Boundaries (Still Enforced)
-
-Even for localhost testing:
-
-| Rule | Status |
-|------|--------|
-| Only localhost/127.0.0.1 targets | ✅ Enforced |
-| Approved scope required | ✅ Enforced |
-| Profile allowlisting | ✅ Enforced |
-| Rate limiting | ✅ Enforced |
-| No external targets | ✅ Enforced |
-| No automatic remediation execution | ✅ Enforced |
-
----
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| `nmap` not found | Install from https://nmap.org/download.html |
-| `subfinder` not found | Install from https://github.com/projectdiscovery/subfinder/releases |
-| Authorization fails | Use `environment="test"` and code `"ZEROTRACE-TEST-ONLY"` |
-| Target outside scope | Ensure target matches scope targets exactly |
-| Profile not allowlisted | Use one of: `service_inventory_v1`, `passive_subdomain_v1`, `tls_metadata_v1`, `s3_read_only_v1` |
-
----
-
-## Files Created
-
-| File | Purpose |
-|------|---------|
-| `test_localhost_recon.py` | Localhost Recon test script |
-| `compose.lab.yaml` | Docker lab environment (already created) |
-| `docs/LAB-RUNBOOK.md` | Full lab runbook |
-
----
-
-You now have everything to test Recon against localhost. Start with the test script using SyntheticAdapter, then install nmap/subfinder for real scanning against your own machine.
+See [docs/LAB-RUNBOOK.md](docs/LAB-RUNBOOK.md) for the full lab runbook and
+[docs/decisions](docs/decisions) for recorded design decisions.
