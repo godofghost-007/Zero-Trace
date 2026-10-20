@@ -31,3 +31,26 @@ This file contains measurements from the Phase 0 environment inspection.
 
 Environment values should be rechecked before Phase 0 signoff if the machine
 or Docker state changes.
+
+## Phase 15 resource measurements
+
+Measured on 2026-10-21 with `python -m scripts.performance_report`; see
+[tasks/evidence/phase-15.md](tasks/evidence/phase-15.md) and
+[tasks/evidence/phase-15-measurements.json](tasks/evidence/phase-15-measurements.json)
+for the full report.
+
+| Measurement | Result |
+|---|---|
+| Cold start | median `1.4883 s`, max `2.2705 s` |
+| Peak process RAM | `60.69 MB` |
+| CPU utilization | `36.9%` |
+| Guard latency | median `0.0119 s`, max `0.1205 s` |
+| SQLite query latency | median `0.0074 s`, max `0.0100 s` |
+| SQLite live-store size | `0.25 MB` |
+| Host RAM available | `3,874.90 MB` |
+| Swap used | `862.67 MB` |
+| Concurrent synthetic load | `0.1143 s`, peak RSS `60.8 MB` |
+| Optional Ollama model | unavailable, reported degraded |
+
+The full profile's `9216 MB` target remains unproven until the optional model
+stack is measured.

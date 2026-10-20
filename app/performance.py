@@ -1,9 +1,10 @@
-"""Phase 14 — Performance and Reliability Testing.
+"""Phase 15 — Resource and Reliability Measurement.
 
 Performance measurement, resource monitoring, and reliability validation for
 the ZeroTrace platform. Measures cold-start time, peak RAM, per-service
 memory, CPU utilization, Guard latency, scanner concurrency, database query
-latency, swap usage, and behavior under concurrent activity.
+latency and size, swap usage, host headroom, optional model availability, and
+behavior under concurrent activity.
 
 All measurements are synthetic — no external targets, no live scanning, no
 production data access.
@@ -11,12 +12,29 @@ production data access.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import json
 import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
 import psutil
 import threading
 import time
 from typing import Any, Callable
+
+_ROOT = Path(__file__).resolve().parents[1]
+_MEASURED_MODULES = (
+    "app.recon",
+    "app.intel",
+    "app.guard",
+    "app.readiness",
+    "app.security",
+    "app.events",
+)
 
 
 class PerformanceError(ValueError):
@@ -70,69 +88,79 @@ _PROFILES: dict[str, ProfileConfig] = {
 def measure_cold_start() -> float:
     """Measure application cold-start time in seconds.
 
-    Measures the time from process start to first successful health check.
-    Returns the elapsed time in seconds.
+    Starts a fresh Python process, imports the core modules, and runs a
+    minimal readiness calculation. The wall-clock time includes interpreter
+    startup and module import.
     """
+    code = (
+        "import app.recon, app.intel, app.guard, app.readiness, "
+        "app.security, app.events; "
+        "from app.readiness import calculate_readiness; "
+        "calculate_readiness(0, 0, (), 0, 0, 0)"
+    )
     start = time.monotonic()
-    # Simulate application startup: import core modules and initialize
-    from app.settings import Settings
-    from app.security import Principal, require_role
-    from app.readiness import calculate_readiness
-
-    # Simulate a minimal health check
-    principal = Principal(subject="test", role="viewer")
-    require_role(principal, "viewer")
-    calculate_readiness(0, 0, [], 0, 0, 0)
-
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     elapsed = time.monotonic() - start
+    if completed.returncode != 0:
+        raise PerformanceError(
+            "cold-start probe failed: " + (completed.stderr or "unknown error")
+        )
     return round(elapsed, 4)
 
 
 def measure_peak_ram() -> float:
-    """Measure peak system RAM usage in MB.
-
-    Returns the peak resident set size (RSS) of the current process in MB.
-    """
+    """Measure peak observed resident memory for this process in MB."""
     process = psutil.Process(os.getpid())
     mem_info = process.memory_info()
-    return round(mem_info.rss / (1024 * 1024), 2)
+    # Windows exposes peak_wset; other platforms fall back to current RSS.
+    peak_bytes = getattr(mem_info, "peak_wset", mem_info.rss)
+    return round(peak_bytes / (1024 * 1024), 2)
+
+
+def _module_import_rss(module_name: str) -> float:
+    code = (
+        f"import {module_name}; "
+        "import os, psutil; "
+        "print(psutil.Process(os.getpid()).memory_info().rss)"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if completed.returncode != 0:
+        raise PerformanceError(
+            f"module memory probe failed for {module_name}: "
+            + (completed.stderr or "unknown error")
+        )
+    try:
+        rss_bytes = int(completed.stdout.strip().splitlines()[-1])
+    except (IndexError, ValueError) as error:
+        raise PerformanceError(
+            f"module memory probe returned invalid output for {module_name}"
+        ) from error
+    return round(rss_bytes / (1024 * 1024), 2)
 
 
 def measure_per_service_memory() -> dict[str, float]:
-    """Measure per-service memory usage in MB.
+    """Measure each service module's fresh-process import footprint in MB.
 
-    Returns a dictionary mapping service names to their memory usage in MB.
-    Since ZeroTrace runs as a single process, this returns memory by module
-    import footprint.
+    ZeroTrace runs as one process, so this is a per-module import footprint,
+    not an isolated per-service container measurement. Each value is still
+    measured in a clean interpreter rather than inferred from a shared RSS.
     """
-    import app.recon
-    import app.intel
-    import app.guard
-    import app.readiness
-    import app.security
-    import app.events
-
-    services = {
-        "recon": app.recon,
-        "intel": app.intel,
-        "guard": app.guard,
-        "readiness": app.readiness,
-        "security": app.security,
-        "events": app.events,
+    return {
+        module_name.removeprefix("app."): _module_import_rss(module_name)
+        for module_name in _MEASURED_MODULES
     }
-
-    results: dict[str, float] = {}
-    process = psutil.Process(os.getpid())
-    baseline = process.memory_info().rss
-
-    for name, module in services.items():
-        # Force module loading if not already loaded
-        _ = module.__name__
-        current = process.memory_info().rss
-        results[name] = round((current - baseline) / (1024 * 1024), 2)
-        baseline = current
-
-    return results
 
 
 def measure_cpu_utilization(duration_seconds: float = 1.0) -> float:
@@ -151,31 +179,50 @@ def measure_cpu_utilization(duration_seconds: float = 1.0) -> float:
 
 
 def measure_guard_latency() -> float:
-    """Measure Guard middleware latency in seconds.
+    """Measure a complete non-streaming Guard request in seconds.
 
-    Measures the time for a complete Guard request cycle: request validation,
-    CSRF check, security header application, and response generation.
-    Returns latency in seconds.
+    The request authenticates, validates the schema, runs prompt-injection
+    checks, forwards to a synthetic upstream transport, scans the response for
+    PII, and returns the completion. No network or model call is made.
     """
-    start = time.monotonic()
+    from fastapi.testclient import TestClient
 
-    # Simulate Guard request processing
-    from app.security import (
-        Principal,
-        require_role,
-        csrf_token,
-        verify_csrf_token,
-        security_headers,
+    from app.guard import GuardConfig, create_guard_app
+    from app.security import Principal
+
+    secret = "performance-guard-secret-0123456789abcdef"
+    api_key = "sk-performance-1234567890abcdef"
+    digest = hmac.new(
+        secret.encode("utf-8"), api_key.encode("utf-8"), hashlib.sha256
+    ).hexdigest()
+    config = GuardConfig(
+        api_key_secret=secret,
+        api_key_digest=digest,
+        upstream_allowlist=("https://api.openai.com",),
     )
+    app = create_guard_app(
+        config=config,
+        transport=_SyntheticGuardTransport(),
+        principal_provider=lambda request: Principal(
+            subject="performance-client", role="viewer"
+        ),
+    )
+    client = TestClient(app)
 
-    principal = Principal(subject="test-client", role="operator")
-    require_role(principal, "operator")
-
-    token = csrf_token("test-session", b"test-secret-key-at-least-32-bytes")
-    verify_csrf_token("test-session", token, b"test-secret-key-at-least-32-bytes")
-    headers = security_headers()
-
+    start = time.monotonic()
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "gpt-3.5-turbo",
+            "messages": [{"role": "user", "content": "Hello, world"}],
+        },
+        headers={"X-API-Key": api_key},
+    )
     elapsed = time.monotonic() - start
+    if response.status_code != 200:
+        raise PerformanceError(
+            f"Guard latency probe returned HTTP {response.status_code}"
+        )
     return round(elapsed, 4)
 
 
@@ -398,23 +445,102 @@ def test_concurrent_intel(num_ingestions: int = 3) -> list[dict[str, str]]:
 
 
 def measure_db_query_latency() -> float:
-    """Measure database query latency in seconds.
+    """Measure a SQLite live-store read in seconds.
 
-    Measures the time for a simple database query against the in-memory
-    repository. Returns latency in seconds.
+    The demo runtime uses the SQLite store; PostgreSQL latency requires a
+    running PostgreSQL service and is recorded separately when available.
     """
-    start = time.monotonic()
+    from app.live_store import LiveStore
+    from app.recon import Scope
 
-    from app.recon import InMemoryReconRepository
-
-    repository = InMemoryReconRepository()
-    # Simulate a simple repository operation
-    _ = repository.runs
-    _ = repository.results
-    _ = repository.requests
-
-    elapsed = time.monotonic() - start
+    with tempfile.TemporaryDirectory() as directory:
+        store = LiveStore(Path(directory) / "performance.sqlite3")
+        store.save_scope(
+            Scope(
+                scope_id="performance-scope",
+                owner_id="performance-operator",
+                targets=("lab.example.test",),
+                environment="isolated_lab",
+                approved=True,
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                profiles=("synthetic_inventory_v1",),
+            )
+        )
+        start = time.monotonic()
+        scopes = store.load_scopes()
+        elapsed = time.monotonic() - start
+        if len(scopes) != 1:
+            raise PerformanceError("database query latency probe returned no scope")
     return round(elapsed, 4)
+
+
+def measure_database_size() -> float:
+    """Return the current SQLite live-store size in MB, or 0 when absent."""
+    path = Path(
+        os.environ.get(
+            "ZEROTRACE_LIVE_DB",
+            str(_ROOT / "data" / "live-engine.sqlite3"),
+        )
+    )
+    if not path.exists():
+        return 0.0
+    return round(path.stat().st_size / (1024 * 1024), 4)
+
+
+def measure_optional_model_load() -> dict[str, Any]:
+    """Probe the optional local model runtime without loading a model.
+
+    The core profile does not require Ollama. When the runtime is absent, the
+    result is explicitly degraded rather than reported as zero load time.
+    """
+    executable = shutil.which("ollama")
+    if executable is None:
+        return {
+            "available": False,
+            "degraded": True,
+            "probe_seconds": None,
+            "reason": "Ollama is not installed; core profile uses deterministic detectors only.",
+        }
+    start = time.monotonic()
+    completed = subprocess.run(
+        [executable, "list"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    elapsed = time.monotonic() - start
+    if completed.returncode != 0:
+        return {
+            "available": False,
+            "degraded": True,
+            "probe_seconds": round(elapsed, 4),
+            "reason": "Ollama is installed but its local runtime is unavailable.",
+        }
+    return {
+        "available": True,
+        "degraded": False,
+        "probe_seconds": round(elapsed, 4),
+        "reason": None,
+    }
+
+
+def measure_concurrent_load() -> dict[str, Any]:
+    """Run synthetic Recon, Guard, and Intel concurrency together."""
+    start = time.monotonic()
+    rss_before = measure_peak_ram()
+    recon = test_concurrent_recon(num_runs=3)
+    guard = test_concurrent_guard(num_requests=5)
+    intel = test_concurrent_intel(num_ingestions=3)
+    rss_after = measure_peak_ram()
+    return {
+        "duration_seconds": round(time.monotonic() - start, 4),
+        "rss_before_mb": rss_before,
+        "rss_after_mb": rss_after,
+        "peak_rss_mb": max(rss_before, rss_after),
+        "recon": recon,
+        "guard": guard,
+        "intel": intel,
+    }
 
 
 def measure_swap_usage() -> float:

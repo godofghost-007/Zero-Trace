@@ -26,8 +26,17 @@ Numbers that have not been measured are not treated as evidence.
 - Security-sensitive, schema, event, dependency, deployment, and data-retention
   decisions require explicit approval before implementation.
 
+## Measured values
+
+- Target laptop resource usage was measured on 2026-10-21; see
+  `MEASURED.md` and `tasks/evidence/phase-15.md`.
+- Core profile: process peak `60.69 MB`, Guard latency median `0.0119 s`,
+  SQLite query median `0.0074 s`.
+- Full profile's `9216 MB` target remains unproven because the optional model
+  stack was not started.
+
 ## Open measurements
 
-- Target laptop resource usage is not yet measured.
 - Application test, lint, type-check, and build thresholds are not yet defined.
+- PostgreSQL latency/size remains unmeasured on the target laptop.
 - These values must be recorded before the related phase is closed.

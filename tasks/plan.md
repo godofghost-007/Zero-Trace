@@ -647,3 +647,38 @@ The approved Phase 8 contract is recorded in
 2. Persist and expose scope-isolated correlation evidence.
 3. Verify pagination, provenance, freshness, and negative cases.
 4. Record Phase 8 evidence and human signoff.
+
+## Phase 14 — Integration and End-to-End Validation
+
+Entry gate: Phase 13 signed off. Implementation authorized 2026-10-21.
+
+Acceptance criteria:
+
+1. A deterministic synthetic flow covers Recon → Intel → Guard → readiness →
+   remediation proposal → verification.
+2. Duplicate scan/idempotency, bounded retry, restart persistence, Guard
+   upstream outage, partial Recon failure, proposal tamper detection, and
+   missing optional inputs are exercised.
+3. Failures are visible as error envelopes, partial states, or unknown
+   readiness components; they are never reported as empty success or zero.
+4. Evidence records exact commands, results, and exceptions.
+
+Evidence: [phase-14.md](evidence/phase-14.md).
+
+## Phase 15 — Resource and Reliability
+
+Entry gate: Phase 14 evidence recorded. Implementation authorized 2026-10-21.
+
+Acceptance criteria:
+
+1. Cold start, peak/per-service memory, CPU, Guard latency, concurrent Recon/
+   Guard/Intel activity, SQLite query latency/size, swap, and host headroom are
+   measured on the target laptop.
+2. `core`, `full`, and `dev` profile budgets are recorded; optional Ollama
+   absence is reported as degraded, not zero.
+3. Measurements and exceptions are reproducible with
+   `python -m scripts.performance_report`.
+4. The full-profile 9 GB target is not claimed as proven without a measured
+   model-stack run.
+
+Evidence: [phase-15.md](evidence/phase-15.md).

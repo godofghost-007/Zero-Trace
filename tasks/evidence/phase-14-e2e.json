@@ -1,0 +1,86 @@
+{
+  "status": "passed",
+  "evaluation_time": "2026-10-21T00:00:00+00:00",
+  "target": "lab.example.test",
+  "pipeline": {
+    "recon": {
+      "run_id": "dfdcf5c5-bc25-4d77-9425-0e0ed964c9b5",
+      "state": "completed",
+      "assets": [
+        "lab.example.test"
+      ],
+      "services": 1
+    },
+    "intel": {
+      "cve": "CVE-2024-1234",
+      "match_method": "exact_cpe",
+      "priority_score": 81.5
+    },
+    "guard": {
+      "normal_status": 200,
+      "blocked_status": 400,
+      "attack_blocked_event": true,
+      "upstream_calls": 1
+    },
+    "readiness": {
+      "score": 27.6,
+      "band": "Critical",
+      "coverage": 100.0,
+      "components": {
+        "AEI": 100.0,
+        "VUI": 56.0,
+        "AIET": 50.0
+      }
+    },
+    "remediation": {
+      "proposal_id": "96758350db29e9b8",
+      "digest": "96758350db29e9b82aec7688ff194459729139650ad64c8d442eab899741f5b5",
+      "validation_errors": [],
+      "status": "approved",
+      "human_approval_required": true
+    }
+  },
+  "duplicate_scan": {
+    "run_id": "fd5ce1f2-8989-49ac-87f3-c1dadbaaec10",
+    "adapter_calls": 1
+  },
+  "retry": {
+    "state": "completed",
+    "adapter_calls": 2
+  },
+  "restart": {
+    "database": "sqlite",
+    "scopes_after_restart": 1
+  },
+  "optional_input_degraded": {
+    "score": null,
+    "coverage": 66.666667,
+    "unknown_components": [
+      "VUI"
+    ]
+  },
+  "guard_outage": {
+    "status": 502,
+    "body": {
+      "error": {
+        "code": "upstream request failed",
+        "message": "upstream request failed"
+      }
+    },
+    "upstream_calls": 1
+  },
+  "partial_recon": {
+    "state": "partial",
+    "warnings": [
+      "tls:timeout"
+    ],
+    "assets": [
+      "lab.example.test"
+    ]
+  },
+  "tampered_proposal": {
+    "validation_errors": [
+      "proposal digest does not match its content"
+    ]
+  }
+}

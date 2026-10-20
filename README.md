@@ -91,6 +91,10 @@ Set-Location frontend
   --host=127.0.0.1 --port=3000 --no-reload
 ```
 
+If this checkout already uses `frontend\.venv`, substitute
+`frontend\.venv\Scripts\python.exe` from the repository root and
+`.\.venv\Scripts\python.exe` from `frontend\`; `run-live-demo.ps1` supports both.
+
 Open <http://127.0.0.1:3000/>. The engine's database defaults to
 `data/live-engine.sqlite3`; override it with `ZEROTRACE_LIVE_DB`.
 
@@ -153,8 +157,14 @@ pnpm exec tsc --noEmit
 pnpm test
 pnpm build
 
-# Compose syntax
+# Phase 14 synthetic end-to-end harness
 Set-Location ..
+.\.venv\Scripts\python.exe -m scripts.phase14_e2e
+
+# Phase 15 resource/reliability report
+.\.venv\Scripts\python.exe -m scripts.performance_report
+
+# Compose syntax
 docker compose config --quiet
 docker compose --profile core config --quiet
 docker compose --profile full config --quiet
@@ -165,6 +175,12 @@ The Phase 13 evidence record is
 [tasks/evidence/phase-13.md](tasks/evidence/phase-13.md). The corrected
 dashboard decision is
 [docs/decisions/ADR-008-dashboard-delivery-correction.md](docs/decisions/ADR-008-dashboard-delivery-correction.md).
+
+Phase 14 evidence is
+[tasks/evidence/phase-14.md](tasks/evidence/phase-14.md); Phase 15 evidence is
+[tasks/evidence/phase-15.md](tasks/evidence/phase-15.md). Both are synthetic
+and bounded. Phase 14 and Phase 15 human signoff remain pending operator
+review.
 
 ## Repository layout
 

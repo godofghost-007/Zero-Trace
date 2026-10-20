@@ -1,9 +1,9 @@
-"""Phase 14 — Performance and Reliability Testing (TDD RED phase).
+"""Phase 15 — Resource and Reliability Measurement.
 
-Tests for performance measurement, resource monitoring, and reliability
-validation. These tests measure cold-start time, peak RAM, per-service memory,
-CPU utilization, model load time, guard latency, scanner concurrency,
-database query latency, swap usage, and behavior under concurrent activity.
+Tests for resource measurement and reliability validation. These tests measure
+cold-start time, peak RAM, per-service memory, CPU utilization, optional model
+availability, Guard latency, scanner concurrency, database latency/size, swap
+usage, host headroom, and behavior under concurrent activity.
 """
 
 import unittest
@@ -122,6 +122,41 @@ class DatabasePerformanceTests(unittest.TestCase):
         min_val = min(results)
         if max_val > 0:
             self.assertLess((max_val - min_val) / max_val, 0.8)
+
+    def test_database_size_is_measured(self) -> None:
+        """The live-store database size must be reported in MB."""
+        from app.performance import measure_database_size
+        result = measure_database_size()
+        self.assertIsInstance(result, float)
+        self.assertGreaterEqual(result, 0.0)
+
+
+class OptionalModelTests(unittest.TestCase):
+    """The optional local model runtime must report degraded state explicitly."""
+
+    def test_optional_model_probe_is_explicit(self) -> None:
+        from app.performance import measure_optional_model_load
+        result = measure_optional_model_load()
+        self.assertIn("available", result)
+        self.assertIn("degraded", result)
+        self.assertIn("probe_seconds", result)
+        self.assertIn("reason", result)
+        if not result["available"]:
+            self.assertTrue(result["degraded"])
+            self.assertIsNotNone(result["reason"])
+
+
+class ConcurrentLoadTests(unittest.TestCase):
+    """Combined synthetic load must complete with measured headroom."""
+
+    def test_concurrent_load_is_measured(self) -> None:
+        from app.performance import measure_concurrent_load
+        result = measure_concurrent_load()
+        self.assertGreaterEqual(result["duration_seconds"], 0.0)
+        self.assertGreater(result["peak_rss_mb"], 0.0)
+        self.assertEqual(len(result["recon"]), 3)
+        self.assertEqual(len(result["guard"]), 5)
+        self.assertEqual(len(result["intel"]), 3)
 
 
 class SwapUsageTests(unittest.TestCase):

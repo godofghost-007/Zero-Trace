@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 import hashlib
+import hmac
 import json
 import re
 from typing import Callable
@@ -287,6 +288,20 @@ class ProposalValidator:
 
         if len(proposal.sha256_digest) != 64:
             errors.append("proposal is missing a valid SHA-256 digest")
+        else:
+            expected_digest = _compute_digest(
+                finding_id=proposal.finding_id,
+                cve_id=proposal.cve_id,
+                fix_type=proposal.fix_type,
+                proposed_fix=proposal.proposed_fix,
+                target_environment=proposal.target_environment,
+                environment_facts=proposal.environment_facts,
+                prompt_version=proposal.prompt_version,
+                model_version=proposal.model_version,
+                created_at=proposal.created_at,
+            )
+            if not hmac.compare_digest(expected_digest, proposal.sha256_digest):
+                errors.append("proposal digest does not match its content")
 
         return errors
 

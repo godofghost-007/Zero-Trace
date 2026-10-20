@@ -1,0 +1,169 @@
+{
+  "phase": 15,
+  "host": {
+    "operating_system": "Windows 11",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.13.5",
+    "cpu_count": 4,
+    "ram_total_mb": 20247.33,
+    "ram_available_mb": 3995.18,
+    "swap_total_mb": 6034.39,
+    "swap_used_mb": 862.67
+  },
+  "profiles": {
+    "core": {
+      "name": "core",
+      "services": {
+        "ollama": false,
+        "full_guard": false,
+        "full_recon": false
+      },
+      "max_ram_mb": 4096,
+      "max_cpu_percent": 50.0
+    },
+    "full": {
+      "name": "full",
+      "services": {
+        "ollama": true,
+        "full_guard": true,
+        "full_recon": true
+      },
+      "max_ram_mb": 9216,
+      "max_cpu_percent": 80.0
+    },
+    "dev": {
+      "name": "dev",
+      "services": {
+        "ollama": false,
+        "full_guard": false,
+        "full_recon": false
+      },
+      "max_ram_mb": 3072,
+      "max_cpu_percent": 40.0
+    }
+  },
+  "measurements": {
+    "cold_start_seconds": {
+      "samples": [
+        2.2705,
+        1.355,
+        1.4883
+      ],
+      "min": 1.355,
+      "median": 1.4883,
+      "max": 2.2705
+    },
+    "peak_process_ram_mb": 60.69,
+    "per_service_import_ram_mb": {
+      "recon": 23.79,
+      "intel": 21.09,
+      "guard": 40.55,
+      "readiness": 19.42,
+      "security": 21.14,
+      "events": 19.62
+    },
+    "cpu_utilization_percent": 36.9,
+    "guard_latency_seconds": {
+      "samples": [
+        0.1205,
+        0.0149,
+        0.0105,
+        0.0119,
+        0.0068
+      ],
+      "min": 0.0068,
+      "median": 0.0119,
+      "max": 0.1205
+    },
+    "db_query_latency_seconds": {
+      "samples": [
+        0.0074,
+        0.0049,
+        0.006,
+        0.0084,
+        0.01
+      ],
+      "min": 0.0049,
+      "median": 0.0074,
+      "max": 0.01
+    },
+    "db_size_mb": 0.25,
+    "swap_usage_mb": 862.67,
+    "host_headroom": {
+      "ram_available_mb": 3874.9,
+      "cpu_available_percent": 84.0,
+      "swap_available_mb": 5171.73
+    },
+    "optional_model": {
+      "available": false,
+      "degraded": true,
+      "probe_seconds": null,
+      "reason": "Ollama is not installed; core profile uses deterministic detectors only."
+    },
+    "concurrent_load": {
+      "duration_seconds": 0.1143,
+      "rss_before_mb": 60.69,
+      "rss_after_mb": 60.8,
+      "peak_rss_mb": 60.8,
+      "recon": [
+        {
+          "run_id": 0,
+          "state": "completed"
+        },
+        {
+          "run_id": 1,
+          "state": "completed"
+        },
+        {
+          "run_id": 2,
+          "state": "completed"
+        }
+      ],
+      "guard": [
+        {
+          "request_id": 0,
+          "status": 200
+        },
+        {
+          "request_id": 1,
+          "status": 200
+        },
+        {
+          "request_id": 2,
+          "status": 200
+        },
+        {
+          "request_id": 3,
+          "status": 200
+        },
+        {
+          "request_id": 4,
+          "status": 200
+        }
+      ],
+      "intel": [
+        {
+          "ingestion_id": 0,
+          "status": 202
+        },
+        {
+          "ingestion_id": 1,
+          "status": 202
+        },
+        {
+          "ingestion_id": 2,
+          "status": 202
+        }
+      ]
+    }
+  },
+  "checks": {
+    "cold_start_under_30s": true,
+    "guard_latency_under_2s": true,
+    "db_latency_under_5s": true,
+    "peak_ram_under_core_4gb": true,
+    "host_headroom_above_512mb": true
+  },
+  "optional_model": "degraded",
+  "overall": "passed"
+}

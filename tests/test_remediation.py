@@ -151,9 +151,7 @@ class ProposalGeneratorTests(unittest.TestCase):
 
 class ProposalValidatorTests(unittest.TestCase):
     def test_validator_accepts_safe_proposal(self) -> None:
-        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        proposal = RemediationProposal(
-            proposal_id=str(uuid4()),
+        proposal = ProposalGenerator().generate(
             finding_id="finding-1",
             cve_id="CVE-2024-1234",
             fix_type=FixType.PATCH,
@@ -162,11 +160,36 @@ class ProposalValidatorTests(unittest.TestCase):
             environment_facts={"os": "ubuntu"},
             prompt_version="prompt-v1",
             model_version="model-v1",
-            sha256_digest="a" * 64,
-            created_at=now,
         )
         errors = ProposalValidator().validate(proposal)
         self.assertEqual(errors, [])
+
+    def test_validator_rejects_tampered_proposal_content(self) -> None:
+        proposal = ProposalGenerator().generate(
+            finding_id="finding-1",
+            cve_id="CVE-2024-1234",
+            fix_type=FixType.PATCH,
+            proposed_fix="apt install -y openssl",
+            target_environment="linux",
+            environment_facts={"os": "ubuntu"},
+            prompt_version="prompt-v1",
+            model_version="model-v1",
+        )
+        tampered = RemediationProposal(
+            proposal_id=proposal.proposal_id,
+            finding_id=proposal.finding_id,
+            cve_id=proposal.cve_id,
+            fix_type=proposal.fix_type,
+            proposed_fix="apt install -y libssl3",
+            target_environment=proposal.target_environment,
+            environment_facts=proposal.environment_facts,
+            prompt_version=proposal.prompt_version,
+            model_version=proposal.model_version,
+            sha256_digest=proposal.sha256_digest,
+            created_at=proposal.created_at,
+        )
+        errors = ProposalValidator().validate(tampered)
+        self.assertTrue(any("digest" in error.lower() for error in errors))
 
     def test_validator_rejects_privilege_escalation(self) -> None:
         now = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -331,9 +354,7 @@ class ModuleFunctionTests(unittest.TestCase):
         self.assertGreater(len(errors), 0)
 
     def test_queue_proposal_stores_and_returns(self) -> None:
-        now = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        proposal = RemediationProposal(
-            proposal_id=str(uuid4()),
+        proposal = ProposalGenerator().generate(
             finding_id="finding-1",
             cve_id="CVE-2024-1234",
             fix_type=FixType.PATCH,
@@ -342,8 +363,6 @@ class ModuleFunctionTests(unittest.TestCase):
             environment_facts={"os": "ubuntu"},
             prompt_version="prompt-v1",
             model_version="model-v1",
-            sha256_digest="a" * 64,
-            created_at=now,
         )
         pid = queue_proposal(proposal)
         self.assertEqual(pid, proposal.proposal_id)

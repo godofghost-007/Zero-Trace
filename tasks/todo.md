@@ -226,7 +226,23 @@
 | P13-SECURITY | Server-side API-key custody, loopback-only engine URL, CSRF/origin checks, security headers | Verified | P13-API |
 | P13-CLI | Standalone dashboard CLI | Removed (superseded; see ADR-008) | P13-API |
 | P13-INTEGRATION | Recon → Intel → Guard → Readiness data flow | Verified | P13-SECURITY |
-| P13-EVIDENCE | Record Phase 13 evidence and human signoff | Verified | P13-INTEGRATION |
+| P13-EVIDENCE | Record Phase 13 evidence and human signoff | Verified (signed off 2026-10-21) | P13-INTEGRATION |
+
+## Phase 14 — Integration and End-to-End Validation
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P14-E2E | Synthetic Recon → Intel → Guard → readiness → proposal → verification harness | Verified | P13-EVIDENCE |
+| P14-FAILURE | Duplicate, retry, restart, outage, partial-failure, tamper, and degraded-input checks | Verified | P14-E2E |
+| P14-EVIDENCE | Record Phase 14 evidence | Verified (signoff pending) | P14-FAILURE |
+
+## Phase 15 — Resource and Reliability
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P15-MEASURE | Cold start, peak/per-service RAM, CPU, Guard latency, concurrency, DB latency/size, swap, headroom | Verified | P14-EVIDENCE |
+| P15-PROFILES | Core/full/dev profile budgets and degraded optional-model reporting | Verified | P15-MEASURE |
+| P15-EVIDENCE | Record Phase 15 measurements on the target laptop | Verified (signoff pending) | P15-PROFILES |
 
 ### Recorded human decision — 2026-10-21
 
