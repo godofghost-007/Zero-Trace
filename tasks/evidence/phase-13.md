@@ -138,4 +138,7 @@ real scanner evidence. See [docs/LAB-RUNBOOK.md](../../docs/LAB-RUNBOOK.md).
 
 ## Human signoff
 
-**Human signoff:** Pending operator review of this corrected evidence record.
+**Human signoff:** Approved by the operator on 2026-10-21 after reviewing the
+corrected React/BFF delivery, the live-engine evaluation, and the listed
+exceptions. This approval accepts the Phase 13 evidence; it does not authorize
+real scanner execution, production deployment, or automatic remediation.

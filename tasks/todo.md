@@ -228,6 +228,12 @@
 | P13-INTEGRATION | Recon → Intel → Guard → Readiness data flow | Verified | P13-SECURITY |
 | P13-EVIDENCE | Record Phase 13 evidence and human signoff | Verified | P13-INTEGRATION |
 
+### Recorded human decision — 2026-10-21
+
+- Phase 13 evidence: **approved**. The corrected React/BFF delivery and
+  live-engine evaluation are accepted with the recorded exceptions.
+- Phase 14 and Phase 15 implementation: **authorized**.
+
 ### Recorded human decision — 2026-10-18
 
 - Phase 6 and Phase 7 runtime/evidence gates: **approved with exceptions**.
