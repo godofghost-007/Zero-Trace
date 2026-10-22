@@ -16,6 +16,7 @@ def app(tmp_path):
         "REDIS_URL": "",
         "AUTO_CREATE_SCHEMA": True,
         "DEMO_MODE": True,
+        "AUTH_REQUIRED": False,
     })
     yield application
     with application.app_context():

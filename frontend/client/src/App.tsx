@@ -2,8 +2,10 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
+import AuthGate from "./components/AuthGate";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { AuthProvider } from "./lib/auth";
 import { DemoProvider } from "./lib/zeroTraceDemo";
 import Architecture from "./pages/Architecture";
 import Database from "./pages/Database";
@@ -38,7 +40,11 @@ export default function App() {
       <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <Toaster />
-          <DemoProvider><Router /></DemoProvider>
+          <AuthProvider>
+            <AuthGate>
+              <DemoProvider><Router /></DemoProvider>
+            </AuthGate>
+          </AuthProvider>
         </TooltipProvider>
       </ThemeProvider>
     </ErrorBoundary>

@@ -34,6 +34,14 @@ if (-not (Test-Path "frontend\dist\public\index.html")) {
     }
 }
 
+Write-Host "Preparing the local sign-in account..."
+Push-Location frontend
+try {
+    & $python -m flask --app backend:create_app demo-credentials
+} finally {
+    Pop-Location
+}
+
 $engine = $null
 try {
     $running = $false

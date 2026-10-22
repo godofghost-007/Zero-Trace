@@ -199,6 +199,16 @@ class LiveStore:
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     payload TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS live_intel_schedule (
+                    source TEXT PRIMARY KEY,
+                    last_started TEXT,
+                    last_completed TEXT,
+                    last_state TEXT NOT NULL DEFAULT 'never',
+                    last_error TEXT,
+                    last_fact_count INTEGER NOT NULL DEFAULT 0,
+                    runs INTEGER NOT NULL DEFAULT 0
+                );
                 """
             )
 
@@ -433,6 +443,62 @@ class LiveStore:
             "kev": kev,
             "ingestions": ingestions,
             "idempotency": idempotency,
+        }
+
+    # -- scheduled intel ------------------------------------------------
+    def save_schedule_state(
+        self,
+        source: str,
+        *,
+        last_started: str | None,
+        last_completed: str | None,
+        last_state: str,
+        last_error: str | None,
+        last_fact_count: int,
+        runs: int,
+    ) -> None:
+        with self._lock, self._session() as connection:
+            connection.execute(
+                """
+                INSERT INTO live_intel_schedule
+                    (source, last_started, last_completed, last_state,
+                     last_error, last_fact_count, runs)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (source) DO UPDATE SET
+                    last_started = excluded.last_started,
+                    last_completed = excluded.last_completed,
+                    last_state = excluded.last_state,
+                    last_error = excluded.last_error,
+                    last_fact_count = excluded.last_fact_count,
+                    runs = excluded.runs
+                """,
+                (
+                    source,
+                    last_started,
+                    last_completed,
+                    last_state,
+                    last_error,
+                    last_fact_count,
+                    runs,
+                ),
+            )
+
+    def load_schedule_state(self) -> dict[str, dict[str, object]]:
+        with self._session() as connection:
+            rows = connection.execute(
+                "SELECT * FROM live_intel_schedule ORDER BY source"
+            ).fetchall()
+        return {
+            str(row["source"]): {
+                "source": str(row["source"]),
+                "lastStarted": row["last_started"],
+                "lastCompleted": row["last_completed"],
+                "state": str(row["last_state"]),
+                "lastError": row["last_error"],
+                "lastFactCount": int(row["last_fact_count"]),
+                "runs": int(row["runs"]),
+            }
+            for row in rows
         }
 
     # -- guard and readiness -------------------------------------------

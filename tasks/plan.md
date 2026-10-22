@@ -682,3 +682,24 @@ Acceptance criteria:
    model-stack run.
 
 Evidence: [phase-15.md](evidence/phase-15.md).
+
+## Phase 16 — Gap Closure
+
+Entry gate: Phase 14 and Phase 15 evidence recorded. Implementation authorized
+2026-10-22.
+
+Acceptance criteria:
+
+1. Production-shaped local login, opaque server-side sessions, CSRF, and
+   ordered viewer/operator/admin roles are enforced by default.
+2. The PostgreSQL BFF path is exercised against a disposable database, and
+   schema collisions with the root application are resolved.
+3. A real `nmap`/`subfinder`/TLS run is executed against the loopback-only
+   isolated lab with explicit, time-bounded scope.
+4. NVD/EPSS/KEV ingestion is scheduled through a shared bounded path, exposes
+   its last-run state, and is exercised with real feeds where practical.
+5. SQLite and PostgreSQL backup, manifest verification, and restore are
+   exercised with visible pre-restore copies.
+6. Remaining exceptions are recorded honestly.
+
+Evidence: [phase-16.md](evidence/phase-16.md).

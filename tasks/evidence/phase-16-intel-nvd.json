@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "generatedAt": "2026-10-22T17:58:39.151355+00:00",
+  "mode": "bounded-first-page",
+  "factCount": 5,
+  "quarantined": 0,
+  "nextStartIndex": 5,
+  "state": "fresh",
+  "cveIds": [
+    "CVE-1999-0095",
+    "CVE-1999-0082",
+    "CVE-1999-1471",
+    "CVE-1999-1122",
+    "CVE-1999-1467"
+  ]
+}

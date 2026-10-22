@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "database": "zerotrace_smoke_6089f443ba",
+  "checks": {
+    "login": 200,
+    "state": 200,
+    "database": "postgresql",
+    "step_recon": 200,
+    "step_intel": 200,
+    "step_guard": 200,
+    "stage": 3,
+    "readiness": 78.0,
+    "audit_valid": true,
+    "events": 6,
+    "ready": 200,
+    "assets": 1,
+    "matches": 1,
+    "summary": 200,
+    "time": "2026-10-22T18:18:28.938775+00:00"
+  },
+  "execution": {
+    "runner": "python:3.13-slim container on network zerotrace_default",
+    "command": "docker run --rm --network zerotrace_default -v E:\\zerotrace-demo:/workspace -w /workspace python:3.13-slim sh -c \"pip install --disable-pip-version-check -q --no-cache-dir -e . -r frontend/requirements.txt && python -u -m scripts.postgres_smoke --url postgresql://zerotrace:zerotrace-dev-only@postgres:5432/zerotrace\"",
+    "note": "The host 127.0.0.1:5432 path was intermittent during Docker Desktop checkpoints; the container-to-container path completed every check."
+  }
+}

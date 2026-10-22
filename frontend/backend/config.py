@@ -28,3 +28,12 @@ class Config:
     AUTO_CREATE_SCHEMA = os.environ.get("AUTO_CREATE_SCHEMA", "true").lower() == "true"
     DEMO_MODE = os.environ.get("DEMO_MODE", "true").lower() == "true"
     MAX_CONTENT_LENGTH = 1 * 1024 * 1024
+    AUTH_REQUIRED = os.environ.get("ZEROTRACE_AUTH_REQUIRED", "true").lower() == "true"
+    AUTH_SESSION_TTL_SECONDS = int(os.environ.get("ZEROTRACE_SESSION_TTL_SECONDS", "28800"))
+    AUTH_COOKIE_SECURE = os.environ.get("ZEROTRACE_COOKIE_SECURE", "false").lower() == "true"
+    AUTH_MAX_LOGIN_ATTEMPTS = int(os.environ.get("ZEROTRACE_MAX_LOGIN_ATTEMPTS", "5"))
+    AUTH_LOGIN_WINDOW_SECONDS = int(os.environ.get("ZEROTRACE_LOGIN_WINDOW_SECONDS", "300"))
+    AUTH_BOOTSTRAP_EMAIL = os.environ.get("ZEROTRACE_BOOTSTRAP_EMAIL", "")
+    AUTH_BOOTSTRAP_PASSWORD = os.environ.get("ZEROTRACE_BOOTSTRAP_PASSWORD", "")
+    AUTH_BOOTSTRAP_ROLE = os.environ.get("ZEROTRACE_BOOTSTRAP_ROLE", "admin")
+    AUTH_BOOTSTRAP_TENANT = os.environ.get("ZEROTRACE_BOOTSTRAP_TENANT", "tenant_local")

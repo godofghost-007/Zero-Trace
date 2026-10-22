@@ -19,21 +19,35 @@ def create_app(test_config: dict | None = None) -> Flask:
     db.init_app(app)
 
     from .api import api
+    from .auth import auth, bootstrap_admin, install_auth_guards
+    from .cli import register_cli
     from .engine_api import engine_api
 
+    app.register_blueprint(auth, url_prefix="/api/v1")
     app.register_blueprint(api, url_prefix="/api/v1")
     app.register_blueprint(engine_api, url_prefix="/api/v1")
+    register_cli(app)
 
     @app.before_request
     def assign_request_id() -> None:
         inbound = request.headers.get("X-Request-ID", "")
         g.request_id = inbound[:96] if inbound and len(inbound) <= 96 else str(uuid4())
 
+    install_auth_guards(app)
+
     @app.after_request
     def attach_request_id(response):
         response.headers["X-Request-ID"] = getattr(g, "request_id", str(uuid4()))
         response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; font-src 'self' data:; connect-src 'self'; "
+            "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        )
+        if request.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.errorhandler(HTTPException)
@@ -69,8 +83,12 @@ def create_app(test_config: dict | None = None) -> Flask:
     if app.config.get("AUTO_CREATE_SCHEMA", True):
         with app.app_context():
             db.create_all()
+            from .services.migrations import migrate_legacy_event_outbox
             from .services.scenario import initialize_demo_state
 
+            migrate_legacy_event_outbox()
+
             initialize_demo_state()
+        bootstrap_admin(app)
 
     return app

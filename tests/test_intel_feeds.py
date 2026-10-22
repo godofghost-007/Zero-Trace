@@ -17,6 +17,7 @@ from app.intel_feeds import (
     merge_intel_signals,
     RetryingFeedTransport,
     UrllibFeedTransport,
+    sync_epss,
 )
 
 
@@ -75,6 +76,43 @@ class IntelFeedTests(unittest.TestCase):
         )
         self.assertEqual(epss[0].score, 0.75)
         self.assertTrue(kev[0].known_ransomware_campaign_use)
+
+    def test_epss_sync_follows_pages_and_rejects_incomplete_results(self) -> None:
+        first = json.dumps({
+            "total": 3,
+            "data": [
+                {"cve": "CVE-2024-0001", "epss": "0.10", "date": "2024-01-03"},
+                {"cve": "CVE-2024-0002", "epss": "0.20", "date": "2024-01-03"},
+            ],
+        }).encode()
+        second = json.dumps({
+            "total": 3,
+            "data": [
+                {"cve": "CVE-2024-0003", "epss": "0.30", "date": "2024-01-03"},
+            ],
+        }).encode()
+        transport = SyntheticTransport({
+            f"{EPSS_ENDPOINT}?limit=2&offset=0": first,
+            f"{EPSS_ENDPOINT}?limit=2&offset=2": second,
+        })
+
+        records = sync_epss(transport, page_size=2)
+
+        self.assertEqual([record.cve_id for record in records], [
+            "CVE-2024-0001",
+            "CVE-2024-0002",
+            "CVE-2024-0003",
+        ])
+        incomplete = SyntheticTransport({
+            f"{EPSS_ENDPOINT}?limit=2&offset=0": json.dumps({
+                "total": 5,
+                "data": [
+                    {"cve": "CVE-2024-0001", "epss": "0.10", "date": "2024-01-03"},
+                ],
+            }).encode(),
+        })
+        with self.assertRaises(FeedError):
+            sync_epss(incomplete, page_size=2)
 
     def test_kev_parser_accepts_current_known_unknown_values(self) -> None:
         kev = KevFeed().parse(

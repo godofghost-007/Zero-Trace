@@ -1,0 +1,67 @@
+{
+  "ok": true,
+  "generatedAt": "2026-10-22T18:19:00Z",
+  "implementation": {
+    "sessionCookie": "zt_session",
+    "cookieFlags": "HttpOnly, SameSite=Lax, Secure configurable",
+    "tokenStorage": "SHA-256 digest only",
+    "csrf": "per-session token required on every mutating API request",
+    "roles": ["viewer", "operator", "admin"],
+    "loginRateLimit": "5 attempts per 300 seconds per address/email key",
+    "sessionTtlSeconds": 28800,
+    "authRequiredByDefault": true,
+    "files": [
+      "frontend/backend/auth.py",
+      "frontend/backend/models.py",
+      "frontend/backend/cli.py",
+      "frontend/client/src/lib/auth.tsx",
+      "frontend/client/src/pages/Login.tsx",
+      "frontend/client/src/components/AuthGate.tsx"
+    ]
+  },
+  "manualCheck": {
+    "session_before": 401,
+    "login": 200,
+    "role": "admin",
+    "state": 200,
+    "mutation_without_csrf": {
+      "status": 403,
+      "code": "csrf_failed"
+    },
+    "mutation_with_csrf": {
+      "status": 200,
+      "stage": 2
+    },
+    "logout": 200,
+    "session_after": 401
+  },
+  "tests": {
+    "command": "python -m pytest backend\\tests -q",
+    "result": "24 passed",
+    "covers": [
+      "session required",
+      "CSRF enforcement",
+      "origin denial",
+      "viewer/operator/admin boundaries",
+      "admin user creation and session revocation",
+      "cross-tenant user creation denial",
+      "password reset with session revocation",
+      "logout revocation",
+      "login rate limit",
+      "backup and restore"
+    ]
+  },
+  "browserCheck": {
+    "url": "http://127.0.0.1:3000/",
+    "loginPageRendered": true,
+    "dashboardRenderedAfterLogin": true,
+    "authSessionRequestBeforeLogin": 401,
+    "loginRequest": 200,
+    "demoStateRequest": 200
+  },
+  "limitations": [
+    "This is local account authentication, not an enterprise identity provider, SSO, SCIM, or MFA.",
+    "Tenant identifiers are carried in the session but data tables are not row-level partitioned by tenant.",
+    "The generated local credential file is for the loopback demo only and should be deleted after first sign-in."
+  ]
+}

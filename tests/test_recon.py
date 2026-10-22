@@ -266,6 +266,37 @@ class ReconAdapterTests(unittest.TestCase):
         self.assertEqual(result.services, (("lab.example.test", "tcp", 443, "https"),))
         self.assertEqual(result.warnings, ())
 
+    def test_nmap_lab_port_override_is_bounded(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        class Runner:
+            def run(self, args: tuple[str, ...], timeout_seconds: int, max_output_bytes: int) -> bytes:
+                calls.append(args)
+                return b"<nmaprun><host><ports/></host></nmaprun>"
+
+        NmapAdapter("nmap", Runner(), ports="8080,8443").run(
+            target(), PROFILES["service_inventory_v1"]
+        )
+
+        self.assertIn("-p", calls[0])
+        self.assertIn("8080,8443", calls[0])
+        with self.assertRaises(ReconError):
+            NmapAdapter("nmap", Runner(), ports="8080; rm -rf /")
+
+    def test_tls_adapter_accepts_explicitly_unverified_metadata(self) -> None:
+        adapter = TLSAdapter(
+            lambda host, port, timeout: {
+                "subject": "lab-tls.zerotrace.local",
+                "issuer": "lab-tls.zerotrace.local",
+                "expires_at": "2030-01-01T00:00:00+00:00",
+                "status": "unverified",
+            }
+        )
+
+        result = adapter.run(target(), PROFILES["tls_metadata_v1"])
+
+        self.assertEqual(result.tls_findings[0]["status"], "unverified")
+
     def test_read_only_s3_adapter_accepts_statuses_but_has_no_write_interface(self) -> None:
         adapter = ReadOnlyS3Adapter(lambda _: "public_listable")
 

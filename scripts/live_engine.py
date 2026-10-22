@@ -20,6 +20,7 @@ so the browser never receives the key.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -56,6 +57,7 @@ from app.intel_feeds import (  # noqa: E402
     RetryingFeedTransport,
     UrllibFeedTransport,
 )
+from app.intel_scheduler import IntelScheduler  # noqa: E402
 from app.live_store import LiveStore  # noqa: E402
 from app.recon import (  # noqa: E402
     AdapterResult,
@@ -259,6 +261,14 @@ class EngineSettings:
     port: int = 8765
     api_key: str = DEFAULT_API_KEY
     auth_secret: bytes = b""
+    tls_port: int = 443
+    tls_verify: bool = True
+    nmap_ports: str | None = None
+    intel_schedule_enabled: bool = True
+    intel_initial_delay_seconds: int = 300
+    nvd_interval_seconds: int = 6 * 60 * 60
+    epss_interval_seconds: int = 12 * 60 * 60
+    kev_interval_seconds: int = 24 * 60 * 60
 
     def __post_init__(self) -> None:
         if self.host not in LOOPBACK_HOSTS:
@@ -269,6 +279,10 @@ class EngineSettings:
             raise ValueError("engine API key must contain at least 16 characters")
         if len(self.auth_secret) < 32:
             raise ValueError("engine auth secret must contain at least 32 bytes")
+        if not 1 <= self.tls_port <= 65535:
+            raise ValueError("engine TLS port is invalid")
+        if not 1 <= self.intel_initial_delay_seconds <= 3600:
+            raise ValueError("intel initial delay is outside the allowed range")
 
     @classmethod
     def from_env(cls) -> "EngineSettings":
@@ -280,13 +294,29 @@ class EngineSettings:
         raw_port = os.environ.get("ZEROTRACE_ENGINE_PORT", "8765")
         try:
             port = int(raw_port)
+            tls_port = int(os.environ.get("ZEROTRACE_TLS_PORT", "443"))
+            initial_delay = int(os.environ.get("ZEROTRACE_INTEL_INITIAL_DELAY", "300"))
+            nvd_interval = int(os.environ.get("ZEROTRACE_NVD_INTERVAL", str(6 * 60 * 60)))
+            epss_interval = int(os.environ.get("ZEROTRACE_EPSS_INTERVAL", str(12 * 60 * 60)))
+            kev_interval = int(os.environ.get("ZEROTRACE_KEV_INTERVAL", str(24 * 60 * 60)))
         except ValueError as error:
-            raise ValueError("ZEROTRACE_ENGINE_PORT must be an integer") from error
+            raise ValueError("engine numeric settings must be integers") from error
         return cls(
             host=os.environ.get("ZEROTRACE_ENGINE_HOST", "127.0.0.1"),
             port=port,
             api_key=api_key,
             auth_secret=secret,
+            tls_port=tls_port,
+            tls_verify=os.environ.get("ZEROTRACE_TLS_VERIFY", "true").lower()
+            == "true",
+            nmap_ports=os.environ.get("ZEROTRACE_NMAP_PORTS", "").strip() or None,
+            intel_schedule_enabled=os.environ.get(
+                "ZEROTRACE_INTEL_SCHEDULE_ENABLED", "true"
+            ).lower() == "true",
+            intel_initial_delay_seconds=initial_delay,
+            nvd_interval_seconds=nvd_interval,
+            epss_interval_seconds=epss_interval,
+            kev_interval_seconds=kev_interval,
         )
 
 
@@ -296,7 +326,8 @@ class GuardInspectRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8_000)
 
 
-def _configured_adapters() -> dict[str, object]:
+def _configured_adapters(settings: EngineSettings | None = None) -> dict[str, object]:
+    settings = settings or EngineSettings.from_env()
     adapters: dict[str, object] = {
         "synthetic_inventory_v1": SyntheticAdapter(
             AdapterResult(
@@ -305,12 +336,16 @@ def _configured_adapters() -> dict[str, object]:
                 warnings=(),
             )
         ),
-        "tls_metadata_v1": TLSAdapter(),
+        "tls_metadata_v1": TLSAdapter(
+            port=settings.tls_port, verify=settings.tls_verify
+        ),
     }
     runner = SubprocessRunner()
     nmap = shutil.which("nmap")
     if nmap:
-        adapters["service_inventory_v1"] = NmapAdapter(nmap, runner)
+        adapters["service_inventory_v1"] = NmapAdapter(
+            nmap, runner, ports=settings.nmap_ports
+        )
     subfinder = shutil.which("subfinder")
     if subfinder:
         adapters["passive_subdomain_v1"] = SubfinderAdapter(subfinder, runner)
@@ -328,7 +363,7 @@ def create_live_engine(
     feed_transport: object | None = None,
 ) -> FastAPI:
     repository = InMemoryReconRepository()
-    adapters = _configured_adapters()
+    adapters = _configured_adapters(settings)
     engine = ReconEngine(repository, adapters, dns_resolver=_dns_resolver)
     store = store or LiveStore(_database_path())
 
@@ -352,6 +387,18 @@ def create_live_engine(
         kev_records=persisted["kev"],  # type: ignore[arg-type]
         ingestions=persisted["ingestions"],  # type: ignore[arg-type]
         idempotency=persisted["idempotency"],  # type: ignore[arg-type]
+    )
+    intel_scheduler = IntelScheduler(
+        intel_repository,
+        transport,
+        intervals={
+            "nvd": settings.nvd_interval_seconds,
+            "epss": settings.epss_interval_seconds,
+            "kev": settings.kev_interval_seconds,
+        },
+        store=store,
+        enabled=settings.intel_schedule_enabled,
+        initial_delay_seconds=settings.intel_initial_delay_seconds,
     )
 
     def scan_completed(job: object) -> None:
@@ -395,9 +442,11 @@ def create_live_engine(
             target=scan_worker, name="zerotrace-recon-worker", daemon=True
         )
         thread.start()
+        intel_scheduler.start()
         try:
             yield
         finally:
+            intel_scheduler.stop()
             stop_worker.set()
             thread.join(timeout=5)
 
@@ -466,6 +515,15 @@ def create_live_engine(
                 "guard": "ok",
                 "storage": "ok" if storage_ok else "degraded",
                 "worker": "stopped" if stop_worker.is_set() else "running",
+                "intelScheduler": (
+                    "disabled"
+                    if not settings.intel_schedule_enabled
+                    else (
+                        "running"
+                        if intel_scheduler.status().get("running")
+                        else "stopped"
+                    )
+                ),
             },
         }
 
@@ -508,6 +566,7 @@ def create_live_engine(
                     "epss": EPSS_ENDPOINT,
                     "kev": CISA_KEV_ENDPOINT,
                 },
+                "schedule": intel_scheduler.status(),
             },
             "guard": {
                 "mode": "inspect-only",
@@ -547,6 +606,20 @@ def create_live_engine(
             if job.scope.owner_id == current.subject
         ]
         return {"items": items}
+
+    @app.get("/api/v1/intel/schedule")
+    async def intel_schedule(request: Request) -> dict[str, object]:
+        actor(request, "viewer")
+        return intel_scheduler.status()
+
+    @app.post("/api/v1/intel/schedule/run")
+    async def run_intel_schedule(request: Request) -> dict[str, object]:
+        actor(request, "operator")
+        source = request.query_params.get("source")
+        if source is not None and source not in {"nvd", "epss", "kev"}:
+            raise FeedError("scheduled feed source is not allowlisted")
+        selected = [source] if source else None
+        return {"results": await asyncio.to_thread(intel_scheduler.run_once, selected)}
 
     @app.post("/api/v1/guard/inspect")
     async def guard_inspect(

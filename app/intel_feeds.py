@@ -13,6 +13,8 @@ NVD_ENDPOINT = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 EPSS_ENDPOINT = "https://api.first.org/data/v1/epss"
 CISA_KEV_ENDPOINT = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 MAX_FEED_BYTES = 8 * 1024 * 1024
+EPSS_PAGE_SIZE = 10_000
+MAX_EPSS_PAGES = 60
 
 
 class FeedError(ValueError):
@@ -279,6 +281,50 @@ class EpssFeed:
             )
         except (KeyError, TypeError, ValueError, IntelError) as error:
             raise FeedError("EPSS record is invalid") from error
+
+
+def sync_epss(
+    transport: FeedTransport,
+    *,
+    page_size: int = EPSS_PAGE_SIZE,
+    max_pages: int = MAX_EPSS_PAGES,
+) -> tuple[EpssRecord, ...]:
+    """Read every page of the paged EPSS API with fixed bounds.
+
+    The public EPSS API returns 100 records by default. Production enrichment
+    needs the full set, so this helper follows the server's ``total`` while
+    capping both page size and page count. A malformed or oversized page fails
+    the whole ingestion instead of silently storing a partial score set.
+    """
+
+    if not 1 <= page_size <= EPSS_PAGE_SIZE or max_pages < 1:
+        raise ValueError("EPSS pagination bounds are invalid")
+    records: list[EpssRecord] = []
+    offset = 0
+    total: int | None = None
+    for _ in range(max_pages):
+        endpoint = f"{EPSS_ENDPOINT}?limit={page_size}&offset={offset}"
+        response = transport.get(endpoint)
+        payload = _json_object(response.body)
+        entries = payload.get("data")
+        if not isinstance(entries, list) or len(entries) > page_size:
+            raise FeedError("EPSS pagination metadata is invalid")
+        page_total = payload.get("total")
+        if isinstance(page_total, int) and page_total >= 0:
+            total = page_total
+        records.extend(EpssFeed().parse(response.body))
+        offset += len(entries)
+        if not entries:
+            break
+        if total is not None and offset >= total:
+            break
+        if len(entries) < page_size:
+            break
+    else:
+        raise FeedError("EPSS pagination exceeded the bounded page count")
+    if total is not None and len(records) < total:
+        raise FeedError("EPSS response was incomplete")
+    return tuple(records)
 
 
 class KevFeed:

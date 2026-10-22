@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Cable, KeyRound, PlugZap, Save, ShieldCheck, TriangleAlert } from "lucide-react";
 import { PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
 import { apiRequest, useApiResource } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import type { EngineSettings, EngineTestResult } from "@/lib/liveEngine";
 
 function messageOf(error: unknown): string {
@@ -9,6 +10,8 @@ function messageOf(error: unknown): string {
 }
 
 export default function Settings() {
+  const { user } = useAuth();
+  const canAdmin = user?.role === "admin";
   const query = useApiResource<EngineSettings>("/settings/engine", 0);
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:8765");
   const [mode, setMode] = useState<"demo" | "live">("demo");
@@ -124,13 +127,14 @@ export default function Settings() {
           </div>
         </div>
         <div className="form-actions">
-          <button className="button button-primary" onClick={() => void save()} disabled={busy}>
+          <button className="button button-primary" onClick={() => void save()} disabled={busy || !canAdmin}>
             <Save size={15} />{busy ? "Saving…" : "Save settings"}
           </button>
           <button className="button button-ghost" onClick={() => void test()} disabled={testing}>
             <PlugZap size={15} />{testing ? "Testing…" : "Test connection"}
           </button>
         </div>
+        {!canAdmin && <div className="small-warning">Only an admin can change the engine connection. Operator and viewer sessions can inspect and test it.</div>}
         {notice && <div className="console-alert success" role="status"><ShieldCheck size={15} /><span>{notice}</span></div>}
         {error && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{error}</span></div>}
         {testResult && <div className="console-alert info" role="status">

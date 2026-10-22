@@ -1,0 +1,57 @@
+{
+  "ok": true,
+  "generatedAt": "2026-10-22T17:42:43Z",
+  "sqlite": {
+    "backup": {
+      "format": "zerotrace-backup-v1",
+      "kind": "sqlite",
+      "source": "E:\\zerotrace-demo\\frontend\\instance\\zerotrace.db",
+      "createdAt": "2026-10-22T17:30:13.774712+00:00",
+      "bytes": 143360,
+      "sha256": "d6f6a9d60b18fb5046aa2f6f367b481d5aa2c2bd5639f21595f32d36a40d0558",
+      "file": "bff-demo.sqlite3"
+    },
+    "auditBackup": {
+      "format": "zerotrace-backup-v1",
+      "kind": "sqlite",
+      "source": "E:\\zerotrace-demo\\frontend\\instance\\guard-audit.sqlite",
+      "createdAt": "2026-10-22T17:30:13.930113+00:00",
+      "bytes": 16384,
+      "sha256": "f78884513601acb4ead8557e26d34be71b382664ecf4bf182fb8d1c0ef6ff245",
+      "file": "bff-demo-audit.sqlite3"
+    },
+    "restore": {
+      "restored": "E:\\zerotrace-demo\\frontend\\instance\\zerotrace.db",
+      "preRestore": "E:\\zerotrace-demo\\frontend\\instance\\zerotrace.db.pre-restore-20261022T173151Z",
+      "probeTableAfterRestore": 0
+    },
+    "commands": [
+      "python -m flask --app backend:create_app backup-db --output ..\\backups\\bff-demo.sqlite3 --overwrite",
+      "python -m flask --app backend:create_app verify-db-backup ..\\backups\\bff-demo.sqlite3",
+      "python -m flask --app backend:create_app restore-db ..\\backups\\bff-demo.sqlite3 --yes"
+    ]
+  },
+  "postgresql": {
+    "backup": {
+      "format": "zerotrace-backup-v1",
+      "kind": "postgresql",
+      "source": "zerotrace-postgres-1:zerotrace_bff",
+      "createdAt": "2026-10-22T17:42:24.355470+00:00",
+      "bytes": 20995,
+      "sha256": "32bf483aa0ae9d12db7a958819ffb5bc31b37155496ae43f1ead0945a43099d3",
+      "file": "postgres-bff.dump"
+    },
+    "restore": {
+      "restored": "zerotrace-postgres-1:zerotrace_bff",
+      "preRestore": "backups\\postgres-bff.dump.pre-restore-20261022T174243Z",
+      "stageBeforeRestore": 1,
+      "stageAfterRestore": 3
+    },
+    "commands": [
+      "python -m scripts.backup_restore postgres-backup --database zerotrace_bff --output backups\\postgres-bff.dump --overwrite",
+      "python -m scripts.backup_restore postgres-verify --container zerotrace-postgres-1 --backup backups\\postgres-bff.dump",
+      "docker exec zerotrace-postgres-1 psql -U zerotrace -d zerotrace_bff -c \"update demo_scenario set stage=1;\"",
+      "python -m scripts.backup_restore postgres-restore --database zerotrace_bff --backup backups\\postgres-bff.dump --yes"
+    ]
+  }
+}

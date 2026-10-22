@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
 
+let csrfToken = "";
+
+export function setCsrfToken(token: string): void {
+  csrfToken = token;
+}
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -18,10 +24,17 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   const headers = new Headers(init.headers);
   headers.set("Accept", "application/json");
   if (init.body !== undefined) headers.set("Content-Type", "application/json");
+  const method = (init.method ?? "GET").toUpperCase();
+  if (method !== "GET" && method !== "HEAD" && csrfToken) {
+    headers.set("X-CSRF-Token", csrfToken);
+  }
   const response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: "same-origin", cache: "no-store" });
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     const err = (payload?.error ?? {}) as Record<string, unknown>;
+    if (response.status === 401 && path !== "/auth/login" && path !== "/auth/session") {
+      window.dispatchEvent(new Event("zt-auth-required"));
+    }
     throw new ApiError(
       typeof err.message === "string" ? err.message : `API request failed (${response.status}).`,
       response.status,

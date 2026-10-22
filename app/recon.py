@@ -484,17 +484,28 @@ class SubfinderAdapter:
 
 
 class NmapAdapter:
-    def __init__(self, executable: str, runner: CommandRunner) -> None:
+    def __init__(
+        self,
+        executable: str,
+        runner: CommandRunner,
+        *,
+        ports: str | None = None,
+    ) -> None:
         self.executable = executable
         self.runner = runner
+        self.ports = _validate_ports(ports)
 
     def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
+        port_arguments = (
+            ("-p", self.ports)
+            if self.ports is not None
+            else ("--top-ports", "100")
+        )
         output = self.runner.run(
             (
                 self.executable,
                 "-sT",
-                "--top-ports",
-                "100",
+                *port_arguments,
                 "-oX",
                 "-",
                 target.value,
@@ -537,12 +548,23 @@ class TLSAdapter:
     def __init__(
         self,
         connector: Callable[[str, int, int], Mapping[str, str]] | None = None,
+        *,
+        port: int = 443,
+        verify: bool = True,
     ) -> None:
-        self.connector = connector or _connect_tls
+        if not 1 <= port <= 65_535:
+            raise ReconError("TLS port is invalid")
+        self.connector = connector or (
+            lambda host, port, timeout: _connect_tls(
+                host, port, timeout, verify=verify
+            )
+        )
+        self.port = port
+        self.verify = verify
 
     def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
         try:
-            finding = dict(self.connector(target.value, 443, profile.timeout_seconds))
+            finding = dict(self.connector(target.value, self.port, profile.timeout_seconds))
         except TimeoutError:
             return AdapterResult(
                 (target.value,),
@@ -560,6 +582,7 @@ class TLSAdapter:
         required = {"subject", "issuer", "expires_at", "status"}
         if set(finding) != required or finding["status"] not in {
             "valid",
+            "unverified",
             "expired",
             "expires_soon",
             "unknown",
@@ -632,6 +655,29 @@ def _request_hash(
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+def _validate_ports(value: str | None) -> str | None:
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate or len(candidate) > 128:
+        raise ReconError("nmap port list is invalid")
+    if any(character not in "0123456789,-" for character in candidate):
+        raise ReconError("nmap port list is invalid")
+    for part in candidate.split(","):
+        if not part:
+            raise ReconError("nmap port list is invalid")
+        bounds = part.split("-", 1)
+        try:
+            numbers = [int(item) for item in bounds]
+        except ValueError as error:
+            raise ReconError("nmap port list is invalid") from error
+        if any(not 1 <= number <= 65_535 for number in numbers):
+            raise ReconError("nmap port list is invalid")
+        if len(numbers) == 2 and numbers[0] > numbers[1]:
+            raise ReconError("nmap port list is invalid")
+    return candidate
+
+
 def _normalize_domain(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ReconError("domain is required")
@@ -656,22 +702,63 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _connect_tls(host: str, port: int, timeout_seconds: int) -> Mapping[str, str]:
-    context = ssl.create_default_context()
+def _connect_tls(
+    host: str, port: int, timeout_seconds: int, *, verify: bool = True
+) -> Mapping[str, str]:
+    if verify:
+        context = ssl.create_default_context()
+    else:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
     with socket.create_connection((host, port), timeout=timeout_seconds) as connection:
         with context.wrap_socket(connection, server_hostname=host) as secure:
-            certificate = secure.getpeercert()
-    subject = _certificate_name(certificate.get("subject", ()))
-    issuer = _certificate_name(certificate.get("issuer", ()))
-    not_after = certificate.get("notAfter")
+            if verify:
+                certificate = secure.getpeercert()
+                subject = _certificate_name(certificate.get("subject", ()))
+                issuer = _certificate_name(certificate.get("issuer", ()))
+                not_after = certificate.get("notAfter")
+            else:
+                subject, issuer, not_after = _decode_unverified_certificate(
+                    secure.getpeercert(binary_form=True)
+                )
     if not subject or not issuer or not not_after:
         raise ReconError("TLS certificate metadata is incomplete")
     return {
         "subject": subject,
         "issuer": issuer,
         "expires_at": not_after,
-        "status": "valid",
+        "status": "valid" if verify else "unverified",
     }
+
+
+def _decode_unverified_certificate(der: bytes | None) -> tuple[str, str, str]:
+    if not der:
+        raise ReconError("TLS certificate metadata is incomplete")
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+
+        certificate = x509.load_der_x509_certificate(der)
+        common_names = {
+            name: ", ".join(
+                attribute.value
+                for attribute in value
+                if attribute.oid == NameOID.COMMON_NAME
+            )
+            for name, value in (
+                ("subject", certificate.subject),
+                ("issuer", certificate.issuer),
+            )
+        }
+        not_after = certificate.not_valid_after_utc.strftime(
+            "%b %d %H:%M:%S %Y GMT"
+        )
+    except Exception as error:
+        raise ReconError("TLS certificate metadata is incomplete") from error
+    if not common_names["subject"] or not common_names["issuer"] or not not_after:
+        raise ReconError("TLS certificate metadata is incomplete")
+    return common_names["subject"], common_names["issuer"], not_after
 
 
 def _certificate_name(parts: object) -> str:

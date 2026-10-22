@@ -289,6 +289,28 @@ def engine_intel_ingest():
     ), 202
 
 
+@engine_api.get("/engine/intel/schedule")
+def engine_intel_schedule():
+    return jsonify(
+        _client().request("GET", "/api/v1/intel/schedule", timeout=6.0)
+    )
+
+
+@engine_api.post("/engine/intel/schedule/run")
+def run_engine_intel_schedule():
+    source = request.args.get("source", "").strip().lower()
+    if source and source not in {"nvd", "epss", "kev"}:
+        return _error("invalid_request", "Scheduled feed source is not allowlisted.", 400)
+    query = f"?source={source}" if source else ""
+    return jsonify(
+        _client().request(
+            "POST",
+            f"/api/v1/intel/schedule/run{query}",
+            timeout=45.0,
+        )
+    )
+
+
 @engine_api.get("/engine/intel/findings")
 def engine_intel_findings():
     try:

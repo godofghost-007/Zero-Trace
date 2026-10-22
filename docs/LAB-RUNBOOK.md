@@ -11,7 +11,7 @@ ports:
 | Service | Container | Host Port (127.0.0.1) | Container Port | Purpose |
 |---------|-----------|----------------------|----------------|---------|
 | Web (nginx) | `zerotrace-lab-web` | 8080 | 80 | Subdomain discovery via Subfinder |
-| Web Alt (httpd) | `zerotrace-lab-web-alt` | 8081 | 8080 | Second web target for Nmap |
+| Web Alt (httpd) | `zerotrace-lab-web-alt` | 8081 | 80 | Second web target for Nmap |
 | TLS (nginx + self-signed cert) | `zerotrace-lab-tls` | 8443 | 443 | TLS certificate/handshake inspection |
 
 All ports are bound to `127.0.0.1` only — not reachable from the external
@@ -22,32 +22,21 @@ network.
 - Docker Desktop running with Linux engine (verified in Phase 0)
 - `docker compose` available
 - `subfinder` and `nmap` binaries installed on the host (for real scanner execution)
-- Administrator access to edit the hosts file
 
-## Step 1: Add Hosts File Entries
+No hosts-file edit or Administrator access is required. The recorded Phase 16
+run uses the public `nip.io` wildcard so the lab names resolve to loopback:
 
-ZeroTrace Recon resolves targets via DNS before scanning. Add these entries
-to your hosts file so lab domains resolve to localhost:
+- `lab-tls.127.0.0.1.nip.io` → `127.0.0.1`
+- `lab-web.127.0.0.1.nip.io` → `127.0.0.1`
+- `lab-web-alt.127.0.0.1.nip.io` → `127.0.0.1`
 
-**Windows (PowerShell, Administrator):**
+The optional traditional names (`lab-web.zerotrace.local`, and so on) still
+require hosts-file entries if you prefer them.
 
-```powershell
-# Open hosts file in Notepad as Administrator
-notepad C:\Windows\System32\drivers\etc\hosts
-```
-
-Add these lines:
-
-```
-127.0.0.1 lab-web.zerotrace.local
-127.0.0.1 lab-web-alt.zerotrace.local
-127.0.0.1 lab-tls.zerotrace.local
-```
-
-Verify resolution:
+## Step 1: Verify loopback resolution
 
 ```powershell
-Resolve-DnsName lab-web.zerotrace.local
+Resolve-DnsName lab-tls.127.0.0.1.nip.io
 ```
 
 ## Step 2: Start the Lab
@@ -71,37 +60,45 @@ Invoke-WebRequest -Uri http://127.0.0.1:8080/ -UseBasicParsing
 # Alt web service
 Invoke-WebRequest -Uri http://127.0.0.1:8081/ -UseBasicParsing
 
-# TLS service (self-signed cert, will warn)
-Invoke-WebRequest -Uri https://127.0.0.1:8443/ -UseBasicParsing -SkipCertificateCheck
+# TLS service (self-signed certificate)
+curl.exe -k https://127.0.0.1:8443/
 ```
+
+The `lab-tls` container generates a short-lived self-signed certificate at
+startup. It is not a production certificate.
 
 ## Step 3: Run ZeroTrace Recon Against the Lab
 
-Configure a ZeroTrace Recon scope targeting the lab domain:
+Start the live engine with the lab ports and a lab-only database:
 
 ```powershell
-$env:ZEROTRACE_ENV = "development"
-$env:DATABASE_URL = "postgresql://zerotrace:zerotrace-dev-only@127.0.0.1:5432/zerotrace"
-
-# Create scope for lab-web.zerotrace.local using the test authorization harness
-# (admin principal, test-only code, synthetic test domain)
+$env:PATH = "$env:LOCALAPPDATA\ZeroTrace\bin;C:\Program Files (x86)\Nmap;$env:PATH"
+$env:ZEROTRACE_TLS_PORT = "8443"
+$env:ZEROTRACE_TLS_VERIFY = "false"
+$env:ZEROTRACE_NMAP_PORTS = "8080,8081,8443"
+$env:ZEROTRACE_INTEL_SCHEDULE_ENABLED = "false"
+$env:ZEROTRACE_LIVE_DB = "data/lab-live-engine.sqlite3"
+.\.venv\Scripts\python.exe -m scripts.live_engine
 ```
 
-Then create a scan run with one of the fixed profiles:
+`ZEROTRACE_TLS_VERIFY=false` is lab-only; the engine records the certificate as
+`status: "unverified"` and never as `valid`.
+
+In a second terminal, run the bounded evidence driver:
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.lab_scan
+```
+
+The scope it creates is explicit, expires in one hour, and contains only
+`lab-tls.127.0.0.1.nip.io` and `lab.zerotrace.local`. It uses the `synthetic`
+environment label because `isolated_lab` requires a public DNS TXT challenge.
+
+Profiles used:
 
 - `passive_subdomain_v1` — Subfinder passive discovery
-- `service_inventory_v1` — Nmap top-100 TCP connect
-- `tls_metadata_v1` — TLS certificate inspection
-
-## Current host limitation
-
-The default live-engine TLS adapter performs its single read on port **443**,
-while this Compose file publishes the TLS container on host port **8443**. The
-host also does not currently have `nmap` or `subfinder` installed. For the
-recorded 2026-10-21 demo evaluation, the live console used the deterministic
-`synthetic_inventory_v1` profile and did not claim a real scanner run. Use the
-synthetic profile for a reproducible evaluation, or remap the lab and install
-the scanner binaries before claiming real scanner evidence.
+- `service_inventory_v1` — Nmap TCP connect over ports `8080,8081,8443`
+- `tls_metadata_v1` — one TLS metadata read on port `8443`
 
 ## Step 4: Verify Scanner Execution
 
@@ -114,6 +111,12 @@ The P6-LAB evidence must record:
 | Cancellation behavior | Cancel a running scan via API |
 | Parser output | Normalized assets/services from scan results |
 | Partial failure | Scan with one service down, observe partial state |
+
+The recorded Phase 16 run is in
+[`tasks/evidence/phase-16-lab-scan.json`](../tasks/evidence/phase-16-lab-scan.json).
+It found open loopback ports `8080`, `8081`, and `8443`, read the lab
+self-signed certificate as `unverified`, and completed the passive profile
+without inventing subdomain assets.
 
 ## Step 5: Stop and Clean Up
 
@@ -128,7 +131,7 @@ docker compose -f compose.lab.yaml down -v   # Also remove volumes
 - **Do not** add public domains or IP addresses to the lab scope.
 - **Do not** run scanners against any target other than the lab domains above.
 - **Do not** commit scan results containing credentials or sensitive data.
-- Remove the hosts file entries when the lab is no longer needed.
+- Remove the optional hosts-file entries if you added them.
 
 ## Troubleshooting
 
@@ -138,4 +141,4 @@ docker compose -f compose.lab.yaml down -v   # Also remove volumes
 | Port already in use | Change host port mapping in `compose.lab.yaml` |
 | DNS resolution fails | Verify hosts file entries are correct |
 | Scanner can't connect | Ensure container is healthy and port is bound to 127.0.0.1 |
-| TLS certificate error | Expected — self-signed cert; use `-SkipCertificateCheck` or equivalent |
+| TLS certificate error | Expected — self-signed cert; use `curl.exe -k` or the engine's lab-only `ZEROTRACE_TLS_VERIFY=false` |

@@ -244,6 +244,22 @@
 | P15-PROFILES | Core/full/dev profile budgets and degraded optional-model reporting | Verified | P15-MEASURE |
 | P15-EVIDENCE | Record Phase 15 measurements on the target laptop | Verified (signoff pending) | P15-PROFILES |
 
+## Phase 16 — Gap Closure
+
+| ID | Task | Status | Dependencies |
+|---|---|---|---|
+| P16-AUTH | Local login, opaque sessions, CSRF, viewer/operator/admin RBAC, CLI accounts | Verified (evidence recorded; signoff pending) | P15-EVIDENCE |
+| P16-POSTGRES | Disposable PostgreSQL BFF smoke and `demo_event_outbox` collision fix | Verified | P16-AUTH |
+| P16-LAB | Real Nmap/TLS/Subfinder run against the loopback isolated lab | Verified | P16-POSTGRES |
+| P16-SCHEDULE | Scheduled NVD/EPSS/KEV ingestion with persisted status and real KEV/EPSS runs | Verified (full NVD live sync is a recorded exception) | P16-AUTH |
+| P16-BACKUP | SQLite and PostgreSQL backup, SHA-256 verify, and restore | Verified | P16-POSTGRES |
+| P16-EVIDENCE | Record Phase 16 evidence and request signoff | Verified (signoff pending) | P16-LAB, P16-SCHEDULE, P16-BACKUP |
+
+### Recorded human decision — 2026-10-22
+
+- Phase 16 implementation: **authorized** to close the five recorded gaps
+  while preserving the local, bounded, evidence-driven demo.
+
 ### Recorded human decision — 2026-10-21
 
 - Phase 13 evidence: **approved**. The corrected React/BFF delivery and

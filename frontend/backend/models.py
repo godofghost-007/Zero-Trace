@@ -7,6 +7,33 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class UserAccount(db.Model):
+    __tablename__ = "user_accounts"
+
+    id = db.Column(db.String(96), primary_key=True)
+    tenant_id = db.Column(db.String(64), nullable=False, default="tenant_local", index=True)
+    email = db.Column(db.String(254), nullable=False, unique=True, index=True)
+    password_hash = db.Column(db.String(512), nullable=False)
+    role = db.Column(db.String(16), nullable=False, default="viewer")
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+
+class AuthSession(db.Model):
+    __tablename__ = "auth_sessions"
+
+    id = db.Column(db.String(96), primary_key=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.String(96), db.ForeignKey("user_accounts.id"), nullable=False, index=True)
+    tenant_id = db.Column(db.String(64), nullable=False, index=True)
+    csrf_token = db.Column(db.String(128), nullable=False)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    last_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+
 class DemoScenario(db.Model):
     __tablename__ = "demo_scenario"
 
@@ -110,7 +137,7 @@ class ScoreSnapshot(db.Model):
 
 
 class EventOutbox(db.Model):
-    __tablename__ = "event_outbox"
+    __tablename__ = "demo_event_outbox"
 
     id = db.Column(db.String(96), primary_key=True)
     event_type = db.Column(db.String(64), nullable=False, index=True)

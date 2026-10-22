@@ -1,0 +1,110 @@
+{
+  "ok": true,
+  "generatedAt": "2026-10-22T18:40:11.511761+00:00",
+  "engine": "http://127.0.0.1:8765",
+  "source": "epss",
+  "durationSeconds": 38.39,
+  "result": {
+    "results": [
+      {
+        "source": "epss",
+        "state": "completed",
+        "factCount": 394415,
+        "error": null,
+        "ingestionId": "c386ff28-9aab-40af-8a56-734d4a6f31de"
+      }
+    ]
+  },
+  "schedule": {
+    "enabled": true,
+    "running": true,
+    "initialDelaySeconds": 3600,
+    "feeds": {
+      "nvd": {
+        "source": "nvd",
+        "state": "never",
+        "lastStarted": null,
+        "lastCompleted": null,
+        "lastError": null,
+        "lastFactCount": 0,
+        "runs": 0,
+        "nextRun": "2026-10-22T19:39:06.210524+00:00",
+        "intervalSeconds": 21600
+      },
+      "epss": {
+        "source": "epss",
+        "lastStarted": "2026-10-22T18:39:33.262698+00:00",
+        "lastCompleted": "2026-10-22T18:40:11.415492+00:00",
+        "state": "completed",
+        "lastError": null,
+        "lastFactCount": 394415,
+        "runs": 2,
+        "nextRun": "2026-10-23T06:40:11.415492+00:00",
+        "intervalSeconds": 43200
+      },
+      "kev": {
+        "source": "kev",
+        "lastStarted": "2026-10-22T18:39:18.492896+00:00",
+        "lastCompleted": "2026-10-22T18:39:24.523736+00:00",
+        "state": "completed",
+        "lastError": null,
+        "lastFactCount": 1754,
+        "runs": 2,
+        "nextRun": "2026-10-23T18:39:24.523736+00:00",
+        "intervalSeconds": 86400
+      }
+    }
+  },
+  "intel": {
+    "facts": 0,
+    "findings": 0,
+    "uncertainMatches": 0,
+    "kevRecords": 1754,
+    "epssRecords": 394415,
+    "feeds": {
+      "nvd": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+      "epss": "https://api.first.org/data/v1/epss",
+      "kev": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    },
+    "schedule": {
+      "enabled": true,
+      "running": true,
+      "initialDelaySeconds": 3600,
+      "feeds": {
+        "nvd": {
+          "source": "nvd",
+          "state": "never",
+          "lastStarted": null,
+          "lastCompleted": null,
+          "lastError": null,
+          "lastFactCount": 0,
+          "runs": 0,
+          "nextRun": "2026-10-22T19:39:06.210524+00:00",
+          "intervalSeconds": 21600
+        },
+        "epss": {
+          "source": "epss",
+          "lastStarted": "2026-10-22T18:39:33.262698+00:00",
+          "lastCompleted": "2026-10-22T18:40:11.415492+00:00",
+          "state": "completed",
+          "lastError": null,
+          "lastFactCount": 394415,
+          "runs": 2,
+          "nextRun": "2026-10-23T06:40:11.415492+00:00",
+          "intervalSeconds": 43200
+        },
+        "kev": {
+          "source": "kev",
+          "lastStarted": "2026-10-22T18:39:18.492896+00:00",
+          "lastCompleted": "2026-10-22T18:39:24.523736+00:00",
+          "state": "completed",
+          "lastError": null,
+          "lastFactCount": 1754,
+          "runs": 2,
+          "nextRun": "2026-10-23T18:39:24.523736+00:00",
+          "intervalSeconds": 86400
+        }
+      }
+    }
+  }
+}

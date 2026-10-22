@@ -54,3 +54,28 @@ for the full report.
 
 The full profile's `9216 MB` target remains unproven until the optional model
 stack is measured.
+
+## Phase 16 gap-closure measurements
+
+Measured on 2026-10-22; see
+[tasks/evidence/phase-16.md](tasks/evidence/phase-16.md) for commands and
+evidence files.
+
+| Measurement | Result |
+|---|---|
+| Local password verification | `0.22 s` (Werkzeug hash check) |
+| BFF demo-state request | `307.73 ms` |
+| KEV real feed run | `6.26 s`, `1,754` records |
+| EPSS real feed run | `38.39 s`, `394,415` records (full paged API) |
+| NVD bounded first page | `5` facts, `0` quarantined |
+| SQLite live store after full EPSS | `27,705,344` bytes |
+| SQLite BFF backup | `143,360` bytes |
+| SQLite Guard audit backup | `16,384` bytes |
+| PostgreSQL BFF dump | `20,995` bytes |
+| Root Python suite | `210 passed` in `24.89 s` |
+| BFF suite | `24 passed` in `32.18 s` |
+| Frontend bundle | `453.22 kB` JS, `135.63 kB` CSS |
+
+The `27.7 MB` SQLite store reflects the full EPSS snapshot. PostgreSQL remains
+the production persistence path; the local SQLite store is demo infrastructure.
+The full live NVD sync was not measured end to end.

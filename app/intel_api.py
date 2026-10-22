@@ -12,12 +12,12 @@ from .intel_feeds import (
     CISA_KEV_ENDPOINT,
     EPSS_ENDPOINT,
     NVD_ENDPOINT,
-    EpssFeed,
     FeedError,
     FeedTransport,
     KevFeed,
     NvdFeed,
     merge_intel_signals,
+    sync_epss,
     sync_nvd,
 )
 from .security import AuthorizationError, Principal, require_role
@@ -99,6 +99,83 @@ class IntelPersistence(Protocol):
         ...
 
 
+def ingest_source(
+    repository: InMemoryIntelRepository,
+    transport: FeedTransport,
+    source: str,
+    *,
+    idempotency_key: str,
+    persistence: IntelPersistence | None = None,
+    retrieved_at: datetime | None = None,
+) -> Ingestion:
+    """Run one bounded feed ingestion.
+
+    This is shared by the HTTP endpoint and the scheduled worker so both paths
+    enforce the same allowlist, idempotency, persistence, and failure semantics.
+    """
+
+    if not idempotency_key or not idempotency_key.strip():
+        raise AuthorizationError("Idempotency-Key is required", 400)
+    endpoint = SOURCE_ENDPOINTS.get(source)
+    if endpoint is None:
+        raise FeedError("feed source is not allowlisted")
+    request_hash = source
+    existing = repository.idempotency.get(idempotency_key)
+    if existing is not None:
+        if existing[0] != request_hash:
+            raise FeedError("idempotency key was reused with a different request")
+        return repository.ingestions[existing[1]]
+    ingestion_id = str(uuid4())
+    try:
+        if source == "nvd":
+            sync_result = sync_nvd(
+                transport,
+                retrieved_at=retrieved_at or datetime.now(timezone.utc),
+                last_known_good=tuple(repository.facts.values()),
+            )
+            facts = merge_intel_signals(
+                sync_result.facts, repository.epss_records, repository.kev_records
+            )
+            for fact in facts:
+                repository.facts[fact.cve_id] = fact
+                if persistence is not None:
+                    persistence.save_fact(fact)
+                for service in repository.services.values():
+                    finding = match_service(service, fact)
+                    if finding is not None:
+                        repository.findings[
+                            f"{service.service_id}:{fact.cve_id}"
+                        ] = finding
+            count = len(facts)
+        else:
+            if source == "epss":
+                repository.epss_records = sync_epss(transport)
+                facts = merge_intel_signals(
+                    tuple(repository.facts.values()),
+                    repository.epss_records,
+                    repository.kev_records,
+                )
+                repository.facts = {fact.cve_id: fact for fact in facts}
+                count = len(repository.epss_records)
+            else:
+                response = transport.get(endpoint)
+                repository.kev_records = KevFeed().parse(response.body)
+                facts = merge_intel_signals(
+                    tuple(repository.facts.values()),
+                    repository.epss_records,
+                    repository.kev_records,
+                )
+                repository.facts = {fact.cve_id: fact for fact in facts}
+                count = len(repository.kev_records)
+        ingestion = Ingestion(ingestion_id, source, "completed", count)
+    except FeedError as error:
+        ingestion = Ingestion(ingestion_id, source, "failed", 0, str(error))
+    repository.ingestions[ingestion_id] = ingestion
+    repository.idempotency[idempotency_key] = (request_hash, ingestion_id)
+    repository.notify_change()
+    return ingestion
+
+
 def create_intel_app(
     repository: InMemoryIntelRepository,
     principal_provider: Callable[[Request], Principal | None],
@@ -136,66 +213,20 @@ def create_intel_app(
         idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict[str, str | int]:
         actor(request, "operator")
-        if idempotency_key is None or not idempotency_key.strip():
+        if idempotency_key is None:
             raise AuthorizationError("Idempotency-Key is required", 400)
-        endpoint = SOURCE_ENDPOINTS.get(payload.source)
-        if endpoint is None:
-            raise FeedError("feed source is not allowlisted")
-        request_hash = payload.source
-        existing = repository.idempotency.get(idempotency_key)
-        if existing is not None:
-            if existing[0] != request_hash:
-                raise FeedError("idempotency key was reused with a different request")
-            ingestion = repository.ingestions[existing[1]]
-            return {"ingestionId": ingestion.ingestion_id, "state": ingestion.state}
-        ingestion_id = str(uuid4())
-        try:
-            response = transport.get(endpoint)
-            if payload.source == "nvd":
-                sync_result = sync_nvd(
-                    transport,
-                    retrieved_at=datetime.now(timezone.utc),
-                    last_known_good=tuple(repository.facts.values()),
-                )
-                facts = merge_intel_signals(
-                    sync_result.facts, repository.epss_records, repository.kev_records
-                )
-                for fact in facts:
-                    repository.facts[fact.cve_id] = fact
-                    if persistence is not None:
-                        persistence.save_fact(fact)
-                    for service in repository.services.values():
-                        finding = match_service(service, fact)
-                        if finding is not None:
-                            repository.findings[
-                                f"{service.service_id}:{fact.cve_id}"
-                            ] = finding
-                count = len(facts)
-            elif payload.source == "epss":
-                repository.epss_records = EpssFeed().parse(response.body)
-                facts = merge_intel_signals(
-                    tuple(repository.facts.values()),
-                    repository.epss_records,
-                    repository.kev_records,
-                )
-                repository.facts = {fact.cve_id: fact for fact in facts}
-                count = len(repository.epss_records)
-            else:
-                repository.kev_records = KevFeed().parse(response.body)
-                facts = merge_intel_signals(
-                    tuple(repository.facts.values()),
-                    repository.epss_records,
-                    repository.kev_records,
-                )
-                repository.facts = {fact.cve_id: fact for fact in facts}
-                count = len(repository.kev_records)
-            ingestion = Ingestion(ingestion_id, payload.source, "completed", count)
-        except FeedError as error:
-            ingestion = Ingestion(ingestion_id, payload.source, "failed", 0, str(error))
-        repository.ingestions[ingestion_id] = ingestion
-        repository.idempotency[idempotency_key] = (request_hash, ingestion_id)
-        repository.notify_change()
-        return {"ingestionId": ingestion_id, "state": ingestion.state, "factCount": ingestion.fact_count}
+        ingestion = ingest_source(
+            repository,
+            transport,
+            payload.source,
+            idempotency_key=idempotency_key,
+            persistence=persistence,
+        )
+        return {
+            "ingestionId": ingestion.ingestion_id,
+            "state": ingestion.state,
+            "factCount": ingestion.fact_count,
+        }
 
     @app.get("/api/v1/intel/ingestions/{ingestion_id}")
     async def ingestion_status(request: Request, ingestion_id: str) -> dict[str, object]:

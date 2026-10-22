@@ -377,3 +377,34 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
   .intel-source-strip { gap: 9px; font-size: 9px; }.source-updated { width: 100%; margin-left: 0; }.match-flow { grid-template-columns: minmax(0,1fr) 16px minmax(0,1fr); gap: 3px; }.match-card { padding: 7px; }.match-card b { font-size: 9px; }.risk-summary { grid-template-columns: 90px 1fr; gap: 8px; }.risk-score > strong { font-size: 31px; }.queue-item { grid-template-columns: 28px minmax(0,1fr); }.queue-window { grid-column: 2; padding: 7px 0 0; border-left: 0; border-top: 1px solid #eee8df; }.queue-state { grid-column: 2; }.queue-main > small { line-height: 1.5; }
   .request-meta { gap: 6px; }.prompt-card { padding: 9px; }.prompt-card p { font-size: 9px; }.block-result { flex-wrap: wrap; }.block-result .state-tag { margin-left: 25px; }.guard-step { grid-template-columns: 22px minmax(0,1fr) auto; gap: 6px; }.guard-step-copy b { font-size: 9px; }.guard-step-copy small { max-width: 210px; font-size: 8px; }.guard-result { font-size: 6px; }.hash-row { grid-template-columns: 66px minmax(0,1fr); }.hash-row code { font-size: 7px; }
 }
+
+/* Authentication surface */
+.user-pill { display: inline-flex; gap: 6px; align-items: center; max-width: 260px; padding: 5px 7px; border: 1px solid var(--line); border-radius: 3px; background: #fffefa; color: #5f6468; font-size: 9px; white-space: nowrap; }
+.user-pill svg { flex: 0 0 auto; color: #7d8387; }
+.user-pill b { max-width: 145px; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.user-pill em { padding-left: 6px; border-left: 1px solid var(--line); color: var(--red); font: normal 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .06em; }
+.auth-loading { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #8b8880; background: var(--paper); font: 9px "SFMono-Regular", Consolas, monospace; letter-spacing: .12em; }
+.auth-spinner { width: 14px; height: 14px; display: block; border: 2px solid rgba(255,255,255,.25); border-top-color: #e6b1a3; border-radius: 50%; animation: zt-spin 1s linear infinite; }
+.auth-error-banner { margin: 0; }
+.login-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0,1.25fr) minmax(380px,.75fr); background: var(--paper); }
+.login-brand { position: relative; display: flex; flex-direction: column; justify-content: center; overflow: hidden; padding: 7vw; background: #252d39; color: #f6f3ed; }
+.login-brand::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(120deg, rgba(0,0,0,.85), transparent 72%); }
+.login-brand::after { content: ""; position: absolute; right: -110px; bottom: -160px; width: 420px; height: 420px; border: 1px solid rgba(230,177,163,.2); border-radius: 50%; box-shadow: 0 0 0 44px rgba(230,177,163,.035), 0 0 0 88px rgba(230,177,163,.025); }
+.login-brand > * { position: relative; z-index: 1; }
+.login-brand-mark { width: 50px; height: 50px; display: grid; place-items: center; margin-bottom: 28px; border: 1px solid rgba(255,255,255,.18); border-radius: 12px 12px 12px 4px; background: #323d4b; color: #e6b1a3; }
+.login-brand .eyebrow { color: #e6b1a3; }
+.login-brand h1 { max-width: 620px; margin: 0; color: #fff; font-size: clamp(38px, 5.2vw, 72px); line-height: .98; font-weight: 650; letter-spacing: -.055em; }
+.login-brand p { max-width: 560px; margin: 25px 0 0; color: #b9bec2; font-size: 15px; line-height: 1.6; }
+.login-boundaries { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 38px; }
+.login-boundaries span { display: inline-flex; gap: 7px; align-items: center; padding: 7px 9px; border: 1px solid #414a55; border-radius: 3px; background: #2c3541; color: #d4d7d8; font: 8px "SFMono-Regular", Consolas, monospace; letter-spacing: .05em; }
+.login-panel { display: flex; flex-direction: column; justify-content: center; padding: clamp(28px, 5vw, 70px); background: var(--paper-light); border-left: 1px solid var(--line); }
+.login-panel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 28px; }
+.login-step { color: var(--red); font: 9px "SFMono-Regular", Consolas, monospace; letter-spacing: .13em; }
+.login-panel h2 { margin: 0; color: #252b33; font-size: 31px; line-height: 1.1; font-weight: 650; letter-spacing: -.04em; }
+.login-panel > p { max-width: 420px; margin: 11px 0 24px; color: #73716b; font-size: 12px; line-height: 1.55; }
+.login-panel code { padding: 1px 4px; border: 1px solid #e5ded3; border-radius: 2px; background: #f7f4ed; color: #5f5c57; font: 9px "SFMono-Regular", Consolas, monospace; }
+.login-panel form { display: grid; gap: 13px; }
+.login-submit { width: 100%; margin-top: 3px; }
+.login-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 28px; padding-top: 13px; border-top: 1px solid var(--line); color: #969188; font: 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; }
+@media (max-width: 900px) { .login-page { grid-template-columns: 1fr; } .login-brand { min-height: 330px; padding: 48px 28px; } .login-brand h1 { font-size: 47px; } .login-panel { padding: 38px 28px; border-left: 0; border-top: 1px solid var(--line); } }
+@media (max-width: 620px) { .user-pill { display: none; } .login-brand { min-height: 285px; padding: 34px 20px; } .login-brand h1 { font-size: 38px; } .login-brand p { font-size: 12px; } .login-boundaries { margin-top: 22px; } .login-panel { padding: 30px 20px; } .login-foot { flex-direction: column; } }

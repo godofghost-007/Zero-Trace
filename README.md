@@ -28,8 +28,11 @@ live engine for the Targets & Scope console.
 | Guard | Prompt-injection and PII inspection, audit metadata, bounded request handling; inspect-only by design |
 | Readiness | AEI/VUI/AIET components, explicit unknown inputs, persisted snapshots |
 | Live console | Server-side engine key, loopback-only engine URL, explicit operator authorization, durable demo state |
+| Auth | Local login, opaque DB-backed sessions, per-session CSRF, ordered viewer/operator/admin roles, CLI account management |
+| Intel schedule | Background NVD/EPSS/KEV runs through the same bounded ingestion path, persisted last-run status, KEV exposed in the UI |
+| Recovery | SHA-256-manifested SQLite and PostgreSQL backup, verification, and restore with pre-restore copies |
 | Persistence | PostgreSQL migrations for the production path; SQLite for the self-contained live-engine demo |
-| Tests | Python, BFF, and frontend suites plus type-check, build, and Compose validation |
+| Tests | Python, BFF, and frontend suites plus type-check, build, Compose validation, and a disposable PostgreSQL smoke test |
 
 The five fixture-backed pages are deterministic demo views. **Targets & Scope**
 and **Engine Settings** are the live console. The UI intentionally exposes only
@@ -67,8 +70,11 @@ Prerequisites: Python 3.13, Node.js 22, pnpm, and PowerShell.
 ```
 
 Open <http://127.0.0.1:3000/>. The script creates a Python environment if
-needed, builds the dashboard if needed, starts the live engine on loopback, and
-serves the UI and API from the same origin.
+needed, builds the dashboard if needed, creates a local admin account on first
+run, starts the live engine on loopback, and serves the UI and API from the same
+origin. The generated credentials are printed once and saved to the gitignored
+`frontend/instance/local-credentials.txt`; delete that file after the first
+sign-in.
 
 ### Manual host setup
 
@@ -80,6 +86,7 @@ py -m venv .venv
 Set-Location frontend
 pnpm install
 pnpm build
+..\.venv\Scripts\python.exe -m flask --app backend:create_app demo-credentials
 Set-Location ..
 
 # Terminal 1 — live engine
@@ -95,35 +102,52 @@ If this checkout already uses `frontend\.venv`, substitute
 `frontend\.venv\Scripts\python.exe` from the repository root and
 `.\.venv\Scripts\python.exe` from `frontend\`; `run-live-demo.ps1` supports both.
 
+Account recovery commands (run from `frontend/`):
+`create-user`, `list-users`, `set-password`, `revoke-user`, and
+`enable-user`. Run them with
+`..\.venv\Scripts\python.exe -m flask --app backend:create_app <command>`.
+
 Open <http://127.0.0.1:3000/>. The engine's database defaults to
 `data/live-engine.sqlite3`; override it with `ZEROTRACE_LIVE_DB`.
 
 ### Docker Compose (PostgreSQL path)
 
+`compose.yaml` starts PostgreSQL and Valkey only; the Flask BFF and React UI
+still run on the host. Start the database profile, then point the BFF at it:
+
 ```powershell
-Copy-Item frontend\.env.example frontend\.env
-# Set a unique local POSTGRES_PASSWORD in frontend\.env.
+docker compose --profile core up -d
+docker compose exec postgres createdb -U zerotrace zerotrace_bff
+
+$env:DATABASE_URL = "postgresql+psycopg://zerotrace:zerotrace-dev-only@127.0.0.1:5432/zerotrace_bff"
 Set-Location frontend
-docker compose up --build
+..\.venv\Scripts\python.exe -m flask --app backend:create_app run `
+  --host=127.0.0.1 --port=3000 --no-reload
 ```
 
-This path runs the Flask application, PostgreSQL, and Valkey. The live engine
-remains a separate loopback process; the Compose stack does not start Recon
-adapters or a model.
+The dedicated `zerotrace_bff` database keeps BFF demo tables separate from the
+root application's PostgreSQL schema. Skip `createdb` if it already exists.
+
+The disposable PostgreSQL proof and the backup/restore commands are listed in
+[tasks/evidence/phase-16.md](tasks/evidence/phase-16.md). The Compose stack does
+not start Recon adapters, the live engine, or a model.
 
 ## Five-minute demo flow
 
-1. Open **Engine Settings**, keep the default loopback URL, and select **Test
+1. Sign in with the local account created by `demo-credentials` (or
+   `create-user`). Sessions are DB-backed and mutations need the per-session
+   CSRF token.
+2. Open **Engine Settings**, keep the default loopback URL, and select **Test
    connection**. The engine key stays on the Flask side.
-2. Open **Targets & Scope**, create a scope with an explicit authorization
+3. Open **Targets & Scope**, create a scope with an explicit authorization
    acknowledgement, then run the TLS-metadata profile (the default) or the
    synthetic inventory profile.
-3. In **Targets & Scope**, use the live **Intel engine** panel to run the CISA
-   KEV sync. The UI exposes KEV only.
-4. In the same page, use the live **Guard inspection** panel to run the
+4. In **Targets & Scope**, use the live **Intel engine** panel to run the CISA
+   KEV sync. The UI exposes KEV only; NVD and EPSS run on the schedule.
+5. In the same page, use the live **Guard inspection** panel to run the
    built-in jailbreak prompt and verify that it is blocked without an upstream
    model call.
-5. Inspect the **Operational Readiness** panel. Unknown inputs are shown as
+6. Inspect the **Operational Readiness** panel. Unknown inputs are shown as
    unknown, not as zero.
 
 Persisted scopes, scan results, KEV counters, Guard inspection counts, and
@@ -138,6 +162,10 @@ readiness snapshots survive an engine restart.
 - Recon rate limits, timeouts, output-size limits, and retry ceilings apply.
 - The engine binds to loopback only; the BFF rejects non-loopback URLs.
 - The browser never receives the engine API key.
+- Authentication is required by default; sessions are opaque, CSRF-protected,
+  and checked against ordered viewer/operator/admin roles.
+- Feed runs use the same allowlisted source endpoints and bounded parsers as the
+  manual endpoint; the scheduler never accepts an arbitrary URL.
 - Guard inspection does not call an upstream model.
 - No exploitation, brute force, credential attack, or automatic remediation is
   implemented.
@@ -164,11 +192,24 @@ Set-Location ..
 # Phase 15 resource/reliability report
 .\.venv\Scripts\python.exe -m scripts.performance_report
 
+# Phase 16 lab evidence driver (requires compose.lab.yaml)
+.\.venv\Scripts\python.exe -m scripts.lab_scan
+
+# Phase 16 scheduled feed run (requires the live engine)
+.\.venv\Scripts\python.exe -m scripts.feed_run --source kev
+
+# Phase 16 backup and restore
+Set-Location frontend
+..\.venv\Scripts\python.exe -m flask --app backend:create_app backup-db --output ..\backups\bff-demo.sqlite3
+..\.venv\Scripts\python.exe -m flask --app backend:create_app verify-db-backup ..\backups\bff-demo.sqlite3
+
 # Compose syntax
+Set-Location ..
 docker compose config --quiet
 docker compose --profile core config --quiet
 docker compose --profile full config --quiet
 docker compose --profile dev config --quiet
+docker compose -f compose.lab.yaml config --quiet
 ```
 
 The Phase 13 evidence record is
@@ -181,6 +222,11 @@ Phase 14 evidence is
 [tasks/evidence/phase-15.md](tasks/evidence/phase-15.md). Both are synthetic
 and bounded. Phase 14 and Phase 15 human signoff remain pending operator
 review.
+
+Phase 16 closes the login/RBAC, PostgreSQL, real-lab scanner, scheduled-feed,
+and backup/restore gaps. Evidence is
+[tasks/evidence/phase-16.md](tasks/evidence/phase-16.md); human signoff is
+pending.
 
 ## Repository layout
 
@@ -199,13 +245,19 @@ compose.lab.yaml         Loopback-only isolated lab containers
 
 ## Known limitations
 
-- The dashboard has no login/RBAC/session model; it is a single-operator local
-  demo.
+- Local account authentication is implemented, but there is no enterprise
+  identity provider, SSO, SCIM, or MFA. Tenant IDs are not row-level data
+  isolation.
 - Fixture-backed views are intentionally synthetic.
-- NVD and EPSS ingestion are API-only and are not scheduled by the UI.
+- NVD and EPSS are scheduled but API-only in the UI; the full live NVD sync was
+  not run end to end.
 - Real scanner profiles require the corresponding binaries and a separately
-  authorized scope.
+  authorized scope. The recorded lab run uses a short-lived self-signed
+  certificate and is not a production scan.
 - The SQLite live store is demo infrastructure; PostgreSQL is the production
-  persistence path.
+  persistence path. The host-port PostgreSQL path was intermittent during
+  Docker Desktop checkpoints; the recorded smoke test uses the Compose network.
+- Backups are local and unencrypted; there is no offsite copy or retention
+  policy.
 - Performance and remediation are measured/proposed, not automatically
-  executed in production.
+  executed in production. The full 9 GB model profile is unproven.
