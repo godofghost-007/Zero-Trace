@@ -303,9 +303,9 @@ Point to the engine summary:
 - readiness status.
 
 The profile picker defaults to **Nmap service scan** and **Subfinder passive**
-when both adapters are available. Selecting several tools queues one scan per
-tool and combines the results in the **Live scans** panel. The scan-level picker
-defaults to **Normal**:
+when both adapters are available. Each of those cards has its own **Scan level**
+dropdown, and both default to **Normal**. Selecting several tools queues one scan
+per tool and combines the results in the **Live scans** panel.
 
 | Level | Nmap | Subfinder | DNS TXT |
 |---|---|---|---|
@@ -315,9 +315,11 @@ defaults to **Normal**:
 | **Deep** | `-sV -p- --version-all` | `-all -recursive -timeout 60 -max-time 12` | Required |
 
 Normal and medium are bounded and use the existing explicit BFF
-`authorized: true` acknowledgement. High and deep automatically require the DNS
-TXT ownership check and an `isolated_lab` scope. No exploitation, brute force,
-NSE scripts, or automatic remediation is enabled at any level.
+`authorized: true` acknowledgement. High and deep automatically enable the blue
+**DNS TXT ownership check** and require an `isolated_lab` scope. The blue check
+is optional for Normal and Medium; if checked, the scope also becomes
+`isolated_lab` and the DNS challenge must be verified. No exploitation, brute
+force, NSE scripts, or automatic remediation is enabled at any level.
 
 Say:
 
@@ -618,10 +620,10 @@ adapters it can actually run:
   `PATH`.
 
 The Targets UI collapses those profile IDs into the **Nmap** and **Subfinder**
-tool choices plus the **Scan level** picker. If the guide sees only synthetic
-and TLS, explain that the engine was started without the scanner binaries on
-`PATH`. Restart with the environment from section 3.3; do not claim the missing
-profiles are broken.
+tool cards, each with its own **Scan level** dropdown. If the guide sees only
+synthetic and TLS, explain that the engine was started without the scanner
+binaries on `PATH`. Restart with the environment from section 3.3; do not claim
+the missing profiles are broken.
 
 ## 7. How Intel works
 

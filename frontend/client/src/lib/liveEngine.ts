@@ -163,7 +163,8 @@ export type ScanLevel = "normal" | "medium" | "high" | "deep";
 export type ScanLevelDefinition = {
   id: ScanLevel;
   label: string;
-  description: string;
+  nmap: string;
+  subfinder: string;
   requiresAuthorization: boolean;
 };
 
@@ -171,25 +172,29 @@ export const SCAN_LEVELS: ScanLevelDefinition[] = [
   {
     id: "normal",
     label: "Normal",
-    description: "Nmap top 100 TCP; Subfinder default sources.",
+    nmap: "Top 100 TCP ports",
+    subfinder: "Default passive sources",
     requiresAuthorization: false,
   },
   {
     id: "medium",
     label: "Medium",
-    description: "Nmap top 1,000 + versions; Subfinder all sources.",
+    nmap: "Top 1,000 ports + versions",
+    subfinder: "All passive sources",
     requiresAuthorization: false,
   },
   {
     id: "high",
     label: "High",
-    description: "Nmap all TCP + light versions; Subfinder recursive sources.",
+    nmap: "All TCP ports + light versions",
+    subfinder: "Recursive passive sources",
     requiresAuthorization: true,
   },
   {
     id: "deep",
     label: "Deep",
-    description: "Nmap all TCP + full versions; Subfinder recursive, longer collection.",
+    nmap: "All TCP ports + full versions",
+    subfinder: "Recursive sources, longer collection",
     requiresAuthorization: true,
   },
 ];
@@ -237,8 +242,8 @@ export function profileTimeoutSeconds(profileId: string): number {
 export const PROFILE_LABELS: Record<string, string> = {
   tls_metadata_v1: "TLS metadata — one real read on port 443",
   synthetic_inventory_v1: "Synthetic inventory — fixture, no network",
-  service_inventory_v1: "Nmap service scan — level selected below",
-  passive_subdomain_v1: "Subfinder — level selected below",
+  service_inventory_v1: "Nmap service scan — choose a level in this card",
+  passive_subdomain_v1: "Subfinder — choose a level in this card",
   service_inventory_normal_v1: "Nmap normal — top 100 TCP ports",
   service_inventory_medium_v1: "Nmap medium — top 1,000 ports + versions",
   service_inventory_high_v1: "Nmap high — all TCP ports + light versions",

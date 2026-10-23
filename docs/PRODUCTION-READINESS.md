@@ -26,8 +26,8 @@ deployment, and evidence, not missing UI or missing core logic.
 - **Explicit authorization**: the BFF requires an operator acknowledgement for
   scope and scan creation. High and Deep profiles additionally require a DNS TXT
   ownership challenge and an `isolated_lab` scope. Normal and Medium are bounded
-  and do not require DNS TXT. Scans can only use targets and profiles in an
-  approved, time-bounded scope.
+  and do not require DNS TXT, but can opt into the same blue DNS TXT check. Scans
+  can only use targets and profiles in an approved, time-bounded scope.
 - **Auth/RBAC**: opaque session cookie, per-session CSRF token, ordered
   `viewer < operator < admin` roles, login rate limiting, session revocation,
   and an audit chain.
@@ -40,10 +40,11 @@ deployment, and evidence, not missing UI or missing core logic.
 - **Quality evidence**: 218 root tests, 25 BFF tests, 6 frontend tests, frontend
   type-check, and a production build passed at this baseline.
 - **New profile selection**: the Targets console lets the operator select Nmap,
-  Subfinder, TLS, and synthetic inventory, and choose Normal, Medium, High, or
-  Deep for Nmap and Subfinder. It queues one scan per selected profile and
-  combines the results. The default is Nmap + Subfinder at Normal when both
-  adapters are installed.
+  Subfinder, TLS, and synthetic inventory. Nmap and Subfinder each have their
+  own Normal/Medium/High/Deep dropdown inside the profile card. It queues one
+  scan per selected profile and combines the results. The default is Nmap +
+  Subfinder at Normal when both adapters are installed. The blue DNS TXT check
+  is required for High/Deep and optional for Normal/Medium.
 
 ## 3. What is still demo-grade
 

@@ -68,7 +68,6 @@ type LastRun = {
   scopeId: string;
   target: string;
   profiles: string[];
-  level: ScanLevel;
   requiresDns: boolean;
 };
 
@@ -102,7 +101,9 @@ export default function Targets() {
   const [target, setTarget] = useState("");
   const [scopeId, setScopeId] = useState("");
   const [expires, setExpires] = useState("24");
-  const [scanLevel, setScanLevel] = useState<ScanLevel>("normal");
+  const [nmapLevel, setNmapLevel] = useState<ScanLevel>("normal");
+  const [subfinderLevel, setSubfinderLevel] = useState<ScanLevel>("normal");
+  const [dnsCheckEnabled, setDnsCheckEnabled] = useState(false);
   const [challenge, setChallenge] = useState<AuthorizationChallenge | null>(null);
   const [authorization, setAuthorization] = useState<TargetAuthorization | null>(null);
   const [verifying, setVerifying] = useState(false);
@@ -129,29 +130,32 @@ export default function Targets() {
   const selectedBaseProfiles = (selectedProfiles ?? defaultProfiles).filter(
     (profileId) => availableTools.includes(profileId),
   );
-  const hasDepthTool =
-    selectedBaseProfiles.includes("service_inventory_v1")
-    || selectedBaseProfiles.includes("passive_subdomain_v1");
+  const nmapSelected = selectedBaseProfiles.includes("service_inventory_v1");
+  const subfinderSelected = selectedBaseProfiles.includes("passive_subdomain_v1");
+  const hasDepthTool = nmapSelected || subfinderSelected;
   const effectiveProfiles = useMemo(() => {
     const ids: string[] = [];
     for (const profileId of selectedBaseProfiles) {
       if (profileId === "service_inventory_v1") {
-        ids.push(LEVEL_PROFILE_IDS.nmap[scanLevel]);
+        ids.push(LEVEL_PROFILE_IDS.nmap[nmapLevel]);
       } else if (profileId === "passive_subdomain_v1") {
-        ids.push(LEVEL_PROFILE_IDS.subfinder[scanLevel]);
+        ids.push(LEVEL_PROFILE_IDS.subfinder[subfinderLevel]);
       } else {
         ids.push(profileId);
       }
     }
     return ids.filter((profileId) => profiles.includes(profileId));
-  }, [selectedBaseProfiles, scanLevel, profiles]);
+  }, [selectedBaseProfiles, nmapLevel, subfinderLevel, profiles]);
   const normalizedTarget = normalizeTarget(target);
   const authorizationValidFor = (host: string) => authorization !== null
     && authorization.target === host
     && new Date(authorization.expiresAt).getTime() > Date.now();
-  const requiresDns = hasDepthTool && scanLevelRequiresAuthorization(scanLevel);
-  const dnsAuthorizationValid = requiresDns && authorizationValidFor(normalizedTarget.host);
-  const authorizationSatisfied = requiresDns ? dnsAuthorizationValid : true;
+  const requiresDns =
+    (nmapSelected && scanLevelRequiresAuthorization(nmapLevel))
+    || (subfinderSelected && scanLevelRequiresAuthorization(subfinderLevel));
+  const dnsRequested = hasDepthTool && (requiresDns || dnsCheckEnabled);
+  const dnsAuthorizationValid = dnsRequested && authorizationValidFor(normalizedTarget.host);
+  const authorizationSatisfied = !dnsRequested || dnsAuthorizationValid;
   const lastRunAuthorizationSatisfied = lastRun === null
     || !lastRun.requiresDns
     || authorizationValidFor(lastRun.target);
@@ -173,8 +177,17 @@ export default function Targets() {
     if (!normalized.error) setScopeId(scopeIdFor(normalized.host));
   };
 
-  const onScanLevelChange = (level: ScanLevel) => {
-    setScanLevel(level);
+  const onProfileLevelChange = (tool: "nmap" | "subfinder", level: ScanLevel) => {
+    if (tool === "nmap") setNmapLevel(level);
+    else setSubfinderLevel(level);
+    setChallenge(null);
+    setAuthorization(null);
+    setVerificationError(null);
+    setError(null);
+  };
+
+  const onDnsCheckChange = (enabled: boolean) => {
+    setDnsCheckEnabled(enabled);
     setChallenge(null);
     setAuthorization(null);
     setVerificationError(null);
@@ -270,7 +283,6 @@ export default function Targets() {
     scopeIdValue: string,
     targetValue: string,
     profileValues: string[],
-    levelValue: ScanLevel,
     requiresDnsValue: boolean,
   ) => {
     setScanError(null);
@@ -280,7 +292,6 @@ export default function Targets() {
       scopeId: scopeIdValue,
       target: targetValue,
       profiles: profileValues,
-      level: levelValue,
       requiresDns: requiresDnsValue,
     });
 
@@ -345,8 +356,12 @@ export default function Targets() {
       setError("Select at least one scan profile.");
       return;
     }
-    if (requiresDns && !dnsAuthorizationValid) {
-      setError("High and deep scans require DNS TXT ownership verification before the scope is created.");
+    if (dnsRequested && !dnsAuthorizationValid) {
+      setError(
+        requiresDns
+          ? "High and deep scans require DNS TXT ownership verification before the scope is created."
+          : "DNS TXT verification is required because the DNS ownership check is enabled.",
+      );
       return;
     }
     const chosenScope = scopeId.trim() || scopeIdFor(normalized.host);
@@ -362,10 +377,10 @@ export default function Targets() {
           authorized: true,
           scopeId: chosenScope,
           targets: [normalized.host],
-          environment: requiresDns ? "isolated_lab" : "synthetic",
+          environment: dnsRequested ? "isolated_lab" : "synthetic",
           profiles: effectiveProfiles,
           expiresInHours: Number(expires),
-          ...(requiresDns && authorization
+          ...(dnsRequested && authorization
             ? { authorizationId: authorization.authorizationId }
             : {}),
         }),
@@ -375,8 +390,7 @@ export default function Targets() {
         chosenScope,
         normalized.host,
         effectiveProfiles,
-        scanLevel,
-        requiresDns,
+        dnsRequested,
       );
     } catch (reason) {
       setError(messageOf(reason));
@@ -388,7 +402,7 @@ export default function Targets() {
   const runAgain = async () => {
     if (!lastRun || lastRun.profiles.length === 0) return;
     if (lastRun.requiresDns && !authorizationValidFor(lastRun.target)) {
-      setError("Verify DNS TXT ownership for this high or deep scan before running it again.");
+      setError("Verify DNS TXT ownership for this run before running it again.");
       return;
     }
     setBusy(true);
@@ -398,7 +412,6 @@ export default function Targets() {
         lastRun.scopeId,
         lastRun.target,
         lastRun.profiles,
-        lastRun.level,
         lastRun.requiresDns,
       );
     } catch (reason) {
@@ -539,7 +552,7 @@ export default function Targets() {
     </Panel>
 
     <div className="two-column">
-      <Panel title="Add an authorized target" subtitle="Lab targets use the authorization checkbox; public targets require a DNS TXT ownership check. The scope is created first, then one scan is queued per selected profile." tag="OPERATOR ACTION">
+      <Panel title="Add an authorized target" subtitle="Choose a level for each tool. High and Deep require DNS TXT ownership verification; Normal and Medium use the bounded operator acknowledgement. The scope is created first, then one scan is queued per selected profile." tag="OPERATOR ACTION">
         <form onSubmit={(event) => void submit(event)}>
           <div className="field-grid">
             <div className="field field-wide">
@@ -552,7 +565,7 @@ export default function Targets() {
                 spellCheck={false}
                 autoComplete="off"
               />
-              <small>The engine requires a dotted domain or IPv4 address. A URL is reduced to its hostname; the path is never requested. Use the public-target check for internet hosts.</small>
+              <small>The engine requires a dotted domain or IPv4 address. A URL is reduced to its hostname; the path is never requested. Use the DNS TXT check for High or Deep scans of internet hosts.</small>
             </div>
             <div className="field">
               <label htmlFor="scope-input">Scope ID</label>
@@ -562,55 +575,70 @@ export default function Targets() {
             <div className="field field-wide">
               <label>Scan profiles</label>
               <div className="profile-picker">
-                {availableTools.map((item) => (
-                  <label className="profile-choice" key={item}>
-                    <input
-                      type="checkbox"
-                      checked={selectedBaseProfiles.includes(item)}
-                      onChange={(event) => {
-                        const checked = event.target.checked;
-                        setSelectedProfiles((current) => {
-                          const base = current ?? selectedBaseProfiles;
-                          return checked
-                            ? Array.from(new Set([...base, item]))
-                            : base.filter((profileId) => profileId !== item);
-                        });
-                        setAuthorization(null);
-                        setChallenge(null);
-                        setVerificationError(null);
-                      }}
-                    />
-                    <span>
-                      <b>{PROFILE_SHORT_LABELS[item] ?? item}</b>
-                      <small>{PROFILE_LABELS[item] ?? item}</small>
-                    </span>
-                  </label>
-                ))}
+                {availableTools.map((item) => {
+                  const isNmap = item === "service_inventory_v1";
+                  const isSubfinder = item === "passive_subdomain_v1";
+                  const level = isNmap ? nmapLevel : isSubfinder ? subfinderLevel : null;
+                  const levelInfo = SCAN_LEVELS.find((entry) => entry.id === level);
+                  const selected = selectedBaseProfiles.includes(item);
+                  return (
+                    <div className={`profile-choice${selected ? " selected" : ""}`} key={item}>
+                      <label className="profile-choice-head">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            if (!checked && (isNmap || isSubfinder)) {
+                              const remaining = selectedBaseProfiles.filter((profileId) => profileId !== item);
+                              if (!remaining.some((profileId) => profileId === "service_inventory_v1" || profileId === "passive_subdomain_v1")) {
+                                setDnsCheckEnabled(false);
+                              }
+                            }
+                            setSelectedProfiles((current) => {
+                              const base = current ?? selectedBaseProfiles;
+                              return checked
+                                ? Array.from(new Set([...base, item]))
+                                : base.filter((profileId) => profileId !== item);
+                            });
+                            setAuthorization(null);
+                            setChallenge(null);
+                            setVerificationError(null);
+                          }}
+                        />
+                        <span>
+                          <b>{PROFILE_SHORT_LABELS[item] ?? item}</b>
+                          <small>{PROFILE_LABELS[item] ?? item}</small>
+                        </span>
+                      </label>
+                      {level && levelInfo && (
+                        <label className="profile-level">
+                          <span>Scan level</span>
+                          <select
+                            value={level}
+                            onChange={(event) => onProfileLevelChange(
+                              isNmap ? "nmap" : "subfinder",
+                              event.target.value as ScanLevel,
+                            )}
+                            disabled={!selected}
+                          >
+                            {SCAN_LEVELS.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}{option.requiresAuthorization ? " (TXT)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                          <small>
+                            {isNmap ? levelInfo.nmap : levelInfo.subfinder}
+                            {levelInfo.requiresAuthorization ? " · DNS TXT required" : ""}
+                          </small>
+                        </label>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <small>Select one or more tools. Nmap and Subfinder use the scan level below and are selected by default when both adapters are available.</small>
-            </div>
-            <div className="field field-wide">
-              <label>Scan level</label>
-              <div className="level-picker">
-                {SCAN_LEVELS.map((level) => (
-                  <label className={`level-choice${scanLevel === level.id ? " active" : ""}`} key={level.id}>
-                    <input
-                      type="radio"
-                      name="scan-level"
-                      value={level.id}
-                      checked={scanLevel === level.id}
-                      onChange={() => onScanLevelChange(level.id)}
-                      disabled={!hasDepthTool}
-                    />
-                    <span>
-                      <b>{level.label}</b>
-                      <small>{level.description}</small>
-                      <em>{level.requiresAuthorization ? "DNS TXT required" : "No DNS TXT"}</em>
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <small>Applies to Nmap and Subfinder. Normal is the default. High and deep require DNS TXT ownership verification.</small>
+              <small>Each Nmap and Subfinder card has its own scan level. Normal is the default; High and Deep require DNS TXT.</small>
             </div>
             <div className="field">
               <label htmlFor="expiry-input">Scope lifetime</label>
@@ -623,12 +651,22 @@ export default function Targets() {
               <small>Expired scopes are rejected by the engine.</small>
             </div>
           </div>
-          {requiresDns ? (
+          <label className="checkbox-row public-mode-row" htmlFor="dns-check">
+            <input
+              id="dns-check"
+              type="checkbox"
+              checked={dnsRequested}
+              disabled={!hasDepthTool || requiresDns}
+              onChange={(event) => onDnsCheckChange(event.target.checked)}
+            />
+            <span><b>DNS TXT ownership check.</b> Required for High and Deep; optional for Normal and Medium. Check this to create a DNS challenge for Nmap or Subfinder.</span>
+          </label>
+          {dnsRequested && (
             <div className="verification-panel">
               <div className="verification-head">
                 <div>
-                  <b>DNS ownership verification</b>
-                  <small>High and Deep scans require this DNS TXT check. Add the record below at your DNS provider, then check it here. The authorization is bound to the selected profiles.</small>
+                  <b>{requiresDns ? "DNS ownership verification required" : "Optional DNS ownership verification"}</b>
+                  <small>High and Deep require this check; Normal and Medium may use it optionally. Add the record below at your DNS provider, then check it here. The authorization is bound to the selected profiles.</small>
                 </div>
                 <StateTag tone={dnsAuthorizationValid ? "green" : "amber"}>
                   {dnsAuthorizationValid ? "VERIFIED" : "NOT VERIFIED"}
@@ -673,11 +711,6 @@ export default function Targets() {
                 </>
               )}
             </div>
-          ) : (
-            <div className="console-alert" role="status">
-              <ShieldCheck size={15} />
-              <span><b>Bounded scan.</b> Normal and medium levels do not require DNS TXT. Only scan targets you own or are permitted to test.</span>
-            </div>
           )}
           {error && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{error}</span></div>}
           <div className="form-actions">
@@ -696,7 +729,7 @@ export default function Targets() {
         {runs.length === 0 && <div className="empty-console">
           <ScanLine size={22} />
           <b>No live scans yet</b>
-          <p>Select Nmap, Subfinder, or another tool above, choose a scan level, complete DNS TXT verification for high or deep, and create the scope. The selected scans run independently and their results are combined here.</p>
+          <p>Select Nmap, Subfinder, or another tool above, set each tool's scan level, complete DNS TXT verification when required or when the blue check is enabled, and create the scope. The selected scans run independently and their results are combined here.</p>
         </div>}
         {runs.length > 0 && <>
           <div className="engine-state-row">

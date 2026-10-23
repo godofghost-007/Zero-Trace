@@ -156,8 +156,8 @@ readiness snapshots survive an engine restart.
 ## Safety boundaries
 
 - The BFF requires `authorized: true` for scope and scan creation.
-- High and Deep profiles require DNS TXT ownership verification; Normal and
-  Medium do not.
+- High and Deep profiles require DNS TXT ownership verification. Normal and
+  Medium do not require it, but can opt into the same blue DNS TXT check.
 - Scan targets must be inside an approved, unexpired scope.
 - Profiles are allowlisted; unavailable adapters are not advertised.
 - The default live selection is Nmap and Subfinder at Normal level.
@@ -174,9 +174,11 @@ readiness snapshots survive an engine restart.
 
 ## Scan levels
 
-Nmap and Subfinder share four operator-selected levels. Normal is the default.
-The BFF still requires `authorized: true` for every scope and scan. High and Deep
-also require a DNS TXT challenge and an `isolated_lab` scope.
+Nmap and Subfinder each have their own scan-level dropdown inside the profile
+card. Normal is the default for both. The BFF still requires `authorized: true`
+for every scope and scan. High and Deep also require the blue DNS TXT ownership
+check and an `isolated_lab` scope. Normal and Medium may use the same blue check
+optionally; leaving it unchecked keeps the scope synthetic and bounded.
 
 | Level | Nmap | Subfinder | DNS TXT |
 |---|---|---|---|
