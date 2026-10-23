@@ -1,21 +1,29 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, Ban, CheckCircle2, Crosshair, FileText, Gauge, Globe2, RefreshCcw, ScanLine, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "wouter";
 import { CodeLabel, PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
-import { apiRequest, useApiResource } from "@/lib/api";
+import { ApiError, apiRequest, useApiResource } from "@/lib/api";
 import {
+  LEVEL_PROFILE_IDS,
   PROFILE_LABELS,
+  PROFILE_SHORT_LABELS,
+  SCAN_LEVELS,
   TERMINAL_SCAN_STATES,
   normalizeTarget,
+  profileTimeoutSeconds,
+  scanLevelRequiresAuthorization,
   scanTone,
   scopeIdFor,
-  type EngineScan,
+  type AuthorizationChallenge,
   type EngineScope,
   type EngineStatus,
   type GuardInspection,
   type Readiness,
+  type ScanLevel,
   type ScanResult,
+  type ScanState,
   type ScanStatus,
+  type TargetAuthorization,
 } from "@/lib/liveEngine";
 import { demoPrompt } from "@/lib/zeroTraceDemo";
 
@@ -23,32 +31,91 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "The request failed.";
 }
 
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+async function apiGetWithRetry<T>(path: string, attempts = 8): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await apiRequest<T>(path);
+    } catch (reason) {
+      lastError = reason;
+      const retryable = reason instanceof ApiError
+        ? RETRYABLE_STATUS.has(reason.status) || reason.status === 429
+        : true;
+      if (!retryable || attempt === attempts - 1) throw reason;
+      await delay(Math.min(2000, 500 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
+type LiveRun = {
+  scanId: string | null;
+  scopeId: string;
+  target: string;
+  profileId: string;
+  state: ScanState | string;
+  result: ScanResult | null;
+  error: string | null;
+};
+
+type LastRun = {
+  scopeId: string;
+  target: string;
+  profiles: string[];
+  level: ScanLevel;
+  requiresDns: boolean;
+};
+
 export default function Targets() {
   const [refresh, setRefresh] = useState(0);
   const statusQuery = useApiResource<EngineStatus>("/engine/status", refresh);
   const scopesQuery = useApiResource<{ items: EngineScope[] }>("/engine/scopes", refresh);
   const readinessQuery = useApiResource<Readiness>("/engine/readiness", refresh);
-  const scansQuery = useApiResource<{ items: EngineScan[] }>("/engine/scans", refresh);
   const status = statusQuery.data;
   const profiles = status?.profiles ?? [];
-  const defaultProfile = profiles.includes("tls_metadata_v1")
-    ? "tls_metadata_v1"
-    : profiles[0] ?? "synthetic_inventory_v1";
+
+  const availableTools = useMemo(() => {
+    const order = [
+      "service_inventory_v1",
+      "passive_subdomain_v1",
+      "tls_metadata_v1",
+      "synthetic_inventory_v1",
+    ];
+    return order.filter((profileId) => profiles.includes(profileId));
+  }, [profiles]);
+
+  const defaultProfiles = useMemo(() => {
+    const preferred = ["service_inventory_v1", "passive_subdomain_v1"].filter(
+      (profileId) => availableTools.includes(profileId),
+    );
+    if (preferred.length > 0) return preferred;
+    if (availableTools.includes("tls_metadata_v1")) return ["tls_metadata_v1"];
+    return availableTools.slice(0, 1);
+  }, [availableTools]);
 
   const [target, setTarget] = useState("");
   const [scopeId, setScopeId] = useState("");
-  const [profile, setProfile] = useState("");
   const [expires, setExpires] = useState("24");
-  const [confirmed, setConfirmed] = useState(false);
+  const [scanLevel, setScanLevel] = useState<ScanLevel>("normal");
+  const [challenge, setChallenge] = useState<AuthorizationChallenge | null>(null);
+  const [authorization, setAuthorization] = useState<TargetAuthorization | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [scanId, setScanId] = useState<string | null>(null);
-  const [scanStatus, setScanStatus] = useState<ScanStatus | null>(null);
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
+  const [selectedProfiles, setSelectedProfiles] = useState<string[] | null>(null);
+  const [runs, setRuns] = useState<LiveRun[]>([]);
   const [scanError, setScanError] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
-  const [lastRun, setLastRun] = useState<{ scopeId: string; target: string; profileId: string } | null>(null);
+  const [lastRun, setLastRun] = useState<LastRun | null>(null);
+  const activeRef = useRef(true);
 
   const [guardText, setGuardText] = useState(demoPrompt);
   const [guardResult, setGuardResult] = useState<GuardInspection | null>(null);
@@ -59,79 +126,211 @@ export default function Targets() {
   const [intelNotice, setIntelNotice] = useState<string | null>(null);
   const [intelError, setIntelError] = useState<string | null>(null);
 
-  const selectedProfile = profile && (profiles.length === 0 || profiles.includes(profile))
-    ? profile
-    : defaultProfile;
-
-  useEffect(() => {
-    if (!scanId) return;
-    let active = true;
-    let timer: number | undefined;
-    const poll = async () => {
-      try {
-        const next = await apiRequest<ScanStatus>(`/engine/scans/${scanId}`);
-        if (!active) return;
-        setScanStatus(next);
-        if (TERMINAL_SCAN_STATES.has(next.state)) {
-          const result = await apiRequest<ScanResult>(`/engine/scans/${scanId}/result`);
-          if (!active) return;
-          setScanResult(result);
-          setPolling(false);
-          setRefresh((value) => value + 1);
-        } else {
-          timer = window.setTimeout(() => void poll(), 1000);
-        }
-      } catch (reason) {
-        if (!active) return;
-        setScanError(messageOf(reason));
-        setPolling(false);
+  const selectedBaseProfiles = (selectedProfiles ?? defaultProfiles).filter(
+    (profileId) => availableTools.includes(profileId),
+  );
+  const hasDepthTool =
+    selectedBaseProfiles.includes("service_inventory_v1")
+    || selectedBaseProfiles.includes("passive_subdomain_v1");
+  const effectiveProfiles = useMemo(() => {
+    const ids: string[] = [];
+    for (const profileId of selectedBaseProfiles) {
+      if (profileId === "service_inventory_v1") {
+        ids.push(LEVEL_PROFILE_IDS.nmap[scanLevel]);
+      } else if (profileId === "passive_subdomain_v1") {
+        ids.push(LEVEL_PROFILE_IDS.subfinder[scanLevel]);
+      } else {
+        ids.push(profileId);
       }
-    };
-    void poll();
-    return () => {
-      active = false;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [scanId]);
+    }
+    return ids.filter((profileId) => profiles.includes(profileId));
+  }, [selectedBaseProfiles, scanLevel, profiles]);
+  const normalizedTarget = normalizeTarget(target);
+  const authorizationValidFor = (host: string) => authorization !== null
+    && authorization.target === host
+    && new Date(authorization.expiresAt).getTime() > Date.now();
+  const requiresDns = hasDepthTool && scanLevelRequiresAuthorization(scanLevel);
+  const dnsAuthorizationValid = requiresDns && authorizationValidFor(normalizedTarget.host);
+  const authorizationSatisfied = requiresDns ? dnsAuthorizationValid : true;
+  const lastRunAuthorizationSatisfied = lastRun === null
+    || !lastRun.requiresDns
+    || authorizationValidFor(lastRun.target);
 
   useEffect(() => {
-    if (scanId) return;
-    const items = scansQuery.data?.items;
-    if (!items || items.length === 0) return;
-    const latest = items[items.length - 1];
-    setScanId(latest.scanId);
-    setScanStatus({ scanId: latest.scanId, state: latest.state });
-    setLastRun({
-      scopeId: latest.scopeId,
-      target: latest.target,
-      profileId: latest.profileId,
-    });
-    setPolling(!TERMINAL_SCAN_STATES.has(latest.state));
-  }, [scanId, scansQuery.data]);
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+    };
+  }, []);
 
   const onTargetChange = (value: string) => {
     setTarget(value);
     setError(null);
+    setChallenge(null);
+    setAuthorization(null);
+    setVerificationError(null);
     const normalized = normalizeTarget(value);
     if (!normalized.error) setScopeId(scopeIdFor(normalized.host));
   };
 
-  const beginScan = async (scopeIdValue: string, targetValue: string, profileValue: string) => {
-    const response = await apiRequest<ScanStatus>("/engine/scans", {
-      method: "POST",
-      body: JSON.stringify({
-        authorized: true,
-        scopeId: scopeIdValue,
-        target: targetValue,
-        profileId: profileValue,
-      }),
-    });
-    setScanId(response.scanId);
-    setScanStatus(response);
-    setScanResult(null);
+  const onScanLevelChange = (level: ScanLevel) => {
+    setScanLevel(level);
+    setChallenge(null);
+    setAuthorization(null);
+    setVerificationError(null);
+    setError(null);
+  };
+
+  const startVerification = async () => {
+    setVerificationError(null);
+    if (normalizedTarget.error) {
+      setVerificationError(normalizedTarget.error);
+      return;
+    }
+    setVerifying(true);
+    try {
+      const response = await apiRequest<AuthorizationChallenge>(
+        "/engine/authorizations/challenges",
+        {
+          method: "POST",
+          body: JSON.stringify({ domain: normalizedTarget.host }),
+        },
+      );
+      setChallenge(response);
+      setAuthorization(null);
+    } catch (reason) {
+      setVerificationError(messageOf(reason));
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const checkVerification = async () => {
+    if (!challenge) return;
+    setVerificationError(null);
+    setVerifying(true);
+    try {
+      const response = await apiRequest<TargetAuthorization>("/engine/authorizations", {
+        method: "POST",
+        body: JSON.stringify({
+          challengeId: challenge.challengeId,
+          profileIds: effectiveProfiles,
+        }),
+      });
+      setAuthorization(response);
+      setChallenge(null);
+    } catch (reason) {
+      setVerificationError(messageOf(reason));
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const updateRun = (scanId: string, patch: Partial<LiveRun>) => {
+    setRuns((current) => current.map((run) => (
+      run.scanId === scanId ? { ...run, ...patch } : run
+    )));
+  };
+
+  const waitForRun = async (run: LiveRun, timeoutSeconds: number) => {
+    if (!run.scanId) return;
+    const pollMilliseconds = timeoutSeconds > 300 ? 5000 : 1000;
+    const attempts = Math.ceil((timeoutSeconds * 1000) / pollMilliseconds) + 30;
+    let state = run.state;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (TERMINAL_SCAN_STATES.has(state)) break;
+      await delay(pollMilliseconds);
+      if (!activeRef.current) return;
+      try {
+        const next = await apiGetWithRetry<ScanStatus>(`/engine/scans/${run.scanId}`);
+        state = next.state;
+        updateRun(run.scanId, { state });
+      } catch (reason) {
+        updateRun(run.scanId, { state: "failed", error: messageOf(reason) });
+        return;
+      }
+    }
+    if (!TERMINAL_SCAN_STATES.has(state)) {
+      updateRun(run.scanId, {
+        state: "timed_out",
+        error: `The scan did not finish within ${Math.ceil(timeoutSeconds / 60)} minutes.`,
+      });
+      return;
+    }
+    try {
+      const result = await apiGetWithRetry<ScanResult>(`/engine/scans/${run.scanId}/result`);
+      if (!activeRef.current) return;
+      updateRun(run.scanId, { result, state: result.state });
+    } catch (reason) {
+      updateRun(run.scanId, { error: messageOf(reason) });
+    }
+  };
+
+  const beginScans = async (
+    scopeIdValue: string,
+    targetValue: string,
+    profileValues: string[],
+    levelValue: ScanLevel,
+    requiresDnsValue: boolean,
+  ) => {
     setScanError(null);
     setPolling(true);
-    setLastRun({ scopeId: scopeIdValue, target: targetValue, profileId: profileValue });
+    setRuns([]);
+    setLastRun({
+      scopeId: scopeIdValue,
+      target: targetValue,
+      profiles: profileValues,
+      level: levelValue,
+      requiresDns: requiresDnsValue,
+    });
+
+    const started: LiveRun[] = [];
+    for (const profileId of profileValues) {
+      try {
+        const response = await apiRequest<ScanStatus>("/engine/scans", {
+          method: "POST",
+          body: JSON.stringify({
+            authorized: true,
+            scopeId: scopeIdValue,
+            target: targetValue,
+            profileId,
+          }),
+        });
+        started.push({
+          scanId: response.scanId,
+          scopeId: scopeIdValue,
+          target: targetValue,
+          profileId,
+          state: response.state,
+          result: null,
+          error: null,
+        });
+      } catch (reason) {
+        started.push({
+          scanId: null,
+          scopeId: scopeIdValue,
+          target: targetValue,
+          profileId,
+          state: "failed",
+          result: null,
+          error: messageOf(reason),
+        });
+      }
+    }
+
+    if (!activeRef.current) return;
+    setRuns(started);
+    setRefresh((value) => value + 1);
+    const batchTimeoutSeconds = profileValues.reduce(
+      (total, profileId) => total + profileTimeoutSeconds(profileId),
+      0,
+    ) + 60;
+    await Promise.all(
+      started
+        .filter((run) => run.scanId !== null)
+        .map((run) => waitForRun(run, batchTimeoutSeconds)),
+    );
+    if (activeRef.current) setPolling(false);
   };
 
   const submit = async (event: FormEvent) => {
@@ -142,8 +341,12 @@ export default function Targets() {
       setError(normalized.error);
       return;
     }
-    if (!confirmed) {
-      setError("Confirm that you own or are authorized to test this target.");
+    if (effectiveProfiles.length === 0) {
+      setError("Select at least one scan profile.");
+      return;
+    }
+    if (requiresDns && !dnsAuthorizationValid) {
+      setError("High and deep scans require DNS TXT ownership verification before the scope is created.");
       return;
     }
     const chosenScope = scopeId.trim() || scopeIdFor(normalized.host);
@@ -159,13 +362,22 @@ export default function Targets() {
           authorized: true,
           scopeId: chosenScope,
           targets: [normalized.host],
-          environment: "synthetic",
-          profiles: [selectedProfile],
+          environment: requiresDns ? "isolated_lab" : "synthetic",
+          profiles: effectiveProfiles,
           expiresInHours: Number(expires),
+          ...(requiresDns && authorization
+            ? { authorizationId: authorization.authorizationId }
+            : {}),
         }),
       });
       setRefresh((value) => value + 1);
-      await beginScan(chosenScope, normalized.host, selectedProfile);
+      await beginScans(
+        chosenScope,
+        normalized.host,
+        effectiveProfiles,
+        scanLevel,
+        requiresDns,
+      );
     } catch (reason) {
       setError(messageOf(reason));
     } finally {
@@ -174,15 +386,21 @@ export default function Targets() {
   };
 
   const runAgain = async () => {
-    if (!lastRun) return;
-    if (!confirmed) {
-      setError("Confirm that you own or are authorized to test this target.");
+    if (!lastRun || lastRun.profiles.length === 0) return;
+    if (lastRun.requiresDns && !authorizationValidFor(lastRun.target)) {
+      setError("Verify DNS TXT ownership for this high or deep scan before running it again.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      await beginScan(lastRun.scopeId, lastRun.target, lastRun.profileId);
+      await beginScans(
+        lastRun.scopeId,
+        lastRun.target,
+        lastRun.profiles,
+        lastRun.level,
+        lastRun.requiresDns,
+      );
     } catch (reason) {
       setError(messageOf(reason));
     } finally {
@@ -234,7 +452,38 @@ export default function Targets() {
     }
   };
 
-  const scanLabel = scanStatus?.state?.replace("_", " ") ?? "no run";
+  const terminalRunCount = runs.filter((run) => TERMINAL_SCAN_STATES.has(run.state)).length;
+  const failedRunCount = runs.filter((run) => (
+    run.error !== null || run.state === "failed" || run.state === "timed_out"
+  )).length;
+  const scanLabel = runs.length === 0
+    ? "no run"
+    : polling
+      ? `running ${terminalRunCount}/${runs.length}`
+      : `${terminalRunCount}/${runs.length} complete`;
+  const batchState = polling ? "running" : failedRunCount > 0 ? "partial" : "completed";
+  const assets = [...new Set(runs.flatMap((run) => run.result?.assets ?? []))];
+  const services = [
+    ...new Map(
+      runs
+        .flatMap((run) => run.result?.services ?? [])
+        .map((service) => [
+          `${service.asset}|${service.protocol}|${service.port}|${service.product ?? ""}|${service.version ?? ""}`,
+          service,
+        ]),
+    ).values(),
+  ];
+  const tlsFindings = [
+    ...new Map(
+      runs
+        .flatMap((run) => run.result?.tlsFindings ?? [])
+        .map((finding) => [
+          `${finding.subject}|${finding.issuer}|${finding.expires_at}|${finding.status}`,
+          finding,
+        ]),
+    ).values(),
+  ];
+  const warnings = [...new Set(runs.flatMap((run) => run.result?.warnings ?? []))];
 
   return <>
     <PageHeading
@@ -248,7 +497,7 @@ export default function Targets() {
       <ShieldCheck size={18} />
       <span>
         <b>Real, bounded reads — only for targets you own or are authorized to test.</b>
-        <small>The TLS profile opens one connection to port 443 and records certificate metadata. It does not exploit, brute-force, or modify the target. Scope and scan creation both require an explicit authorization confirmation.</small>
+        <small>The selected profiles run bounded, read-only checks: Nmap uses a TCP connect scan, Subfinder uses passive discovery, and TLS opens one metadata connection. They do not exploit, brute-force, or modify the target. Scope and scan creation both require an explicit authorization confirmation.</small>
       </span>
       <CodeLabel>LOOPBACK ENGINE</CodeLabel>
     </div>
@@ -290,7 +539,7 @@ export default function Targets() {
     </Panel>
 
     <div className="two-column">
-      <Panel title="Add an authorized target" subtitle="The scope is created first; the scan can only use a target inside it." tag="OPERATOR ACTION">
+      <Panel title="Add an authorized target" subtitle="Lab targets use the authorization checkbox; public targets require a DNS TXT ownership check. The scope is created first, then one scan is queued per selected profile." tag="OPERATOR ACTION">
         <form onSubmit={(event) => void submit(event)}>
           <div className="field-grid">
             <div className="field field-wide">
@@ -303,19 +552,65 @@ export default function Targets() {
                 spellCheck={false}
                 autoComplete="off"
               />
-              <small>The engine requires a dotted domain or IPv4 address. A URL is reduced to its hostname; the path is never requested.</small>
+              <small>The engine requires a dotted domain or IPv4 address. A URL is reduced to its hostname; the path is never requested. Use the public-target check for internet hosts.</small>
             </div>
             <div className="field">
               <label htmlFor="scope-input">Scope ID</label>
               <input id="scope-input" value={scopeId} onChange={(event) => setScopeId(event.target.value)} placeholder="scope-example-com" spellCheck={false} autoComplete="off" />
               <small>Approved scope records are owned by the local engine operator.</small>
             </div>
-            <div className="field">
-              <label htmlFor="profile-input">Profile</label>
-              <select id="profile-input" value={selectedProfile} onChange={(event) => setProfile(event.target.value)}>
-                {(profiles.length ? profiles : [defaultProfile]).map((item) => <option key={item} value={item}>{PROFILE_LABELS[item] ?? item}</option>)}
-              </select>
-              <small>{selectedProfile === "tls_metadata_v1" ? "Connects to the target on 443. No other port or path is touched." : selectedProfile === "synthetic_inventory_v1" ? "Writes a fixed lab fixture; no network request is made." : "Requires the corresponding scanner binary on this machine."}</small>
+            <div className="field field-wide">
+              <label>Scan profiles</label>
+              <div className="profile-picker">
+                {availableTools.map((item) => (
+                  <label className="profile-choice" key={item}>
+                    <input
+                      type="checkbox"
+                      checked={selectedBaseProfiles.includes(item)}
+                      onChange={(event) => {
+                        const checked = event.target.checked;
+                        setSelectedProfiles((current) => {
+                          const base = current ?? selectedBaseProfiles;
+                          return checked
+                            ? Array.from(new Set([...base, item]))
+                            : base.filter((profileId) => profileId !== item);
+                        });
+                        setAuthorization(null);
+                        setChallenge(null);
+                        setVerificationError(null);
+                      }}
+                    />
+                    <span>
+                      <b>{PROFILE_SHORT_LABELS[item] ?? item}</b>
+                      <small>{PROFILE_LABELS[item] ?? item}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <small>Select one or more tools. Nmap and Subfinder use the scan level below and are selected by default when both adapters are available.</small>
+            </div>
+            <div className="field field-wide">
+              <label>Scan level</label>
+              <div className="level-picker">
+                {SCAN_LEVELS.map((level) => (
+                  <label className={`level-choice${scanLevel === level.id ? " active" : ""}`} key={level.id}>
+                    <input
+                      type="radio"
+                      name="scan-level"
+                      value={level.id}
+                      checked={scanLevel === level.id}
+                      onChange={() => onScanLevelChange(level.id)}
+                      disabled={!hasDepthTool}
+                    />
+                    <span>
+                      <b>{level.label}</b>
+                      <small>{level.description}</small>
+                      <em>{level.requiresAuthorization ? "DNS TXT required" : "No DNS TXT"}</em>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <small>Applies to Nmap and Subfinder. Normal is the default. High and deep require DNS TXT ownership verification.</small>
             </div>
             <div className="field">
               <label htmlFor="expiry-input">Scope lifetime</label>
@@ -328,41 +623,100 @@ export default function Targets() {
               <small>Expired scopes are rejected by the engine.</small>
             </div>
           </div>
-          <label className="checkbox-row" htmlFor="authorized">
-            <input id="authorized" type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
-            <span><b>I own this target or have written authorization to test it.</b> I understand this creates a real scope and may open a network connection to the target.</span>
-          </label>
+          {requiresDns ? (
+            <div className="verification-panel">
+              <div className="verification-head">
+                <div>
+                  <b>DNS ownership verification</b>
+                  <small>High and Deep scans require this DNS TXT check. Add the record below at your DNS provider, then check it here. The authorization is bound to the selected profiles.</small>
+                </div>
+                <StateTag tone={dnsAuthorizationValid ? "green" : "amber"}>
+                  {dnsAuthorizationValid ? "VERIFIED" : "NOT VERIFIED"}
+                </StateTag>
+              </div>
+              {dnsAuthorizationValid && authorization ? (
+                <div className="console-alert success" role="status">
+                  <CheckCircle2 size={15} />
+                  <span><b>DNS ownership verified.</b> {authorization.target} is authorized until {new Date(authorization.expiresAt).toLocaleString()}.</span>
+                </div>
+              ) : (
+                <>
+                  {!challenge && (
+                    <button
+                      className="button button-ghost"
+                      type="button"
+                      onClick={() => void startVerification()}
+                      disabled={verifying || Boolean(normalizedTarget.error)}
+                    >
+                      <ShieldCheck size={15} />{verifying ? "Creating record…" : "Create DNS challenge"}
+                    </button>
+                  )}
+                  {challenge && (
+                    <div className="verification-record">
+                      <small>Create this DNS TXT record, then wait for it to propagate:</small>
+                      <div><span>NAME</span><code>{challenge.recordName}</code></div>
+                      <div><span>VALUE</span><code>{challenge.token}</code></div>
+                      <small>Expires {new Date(challenge.expiresAt).toLocaleString()}. The record is checked against public DNS.</small>
+                      <div className="verification-actions">
+                        <button
+                          className="button button-primary"
+                          type="button"
+                          onClick={() => void checkVerification()}
+                          disabled={verifying || effectiveProfiles.length === 0}
+                        >
+                          <ShieldCheck size={15} />{verifying ? "Checking DNS…" : "Check DNS and authorize"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {verificationError && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{verificationError}</span></div>}
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="console-alert" role="status">
+              <ShieldCheck size={15} />
+              <span><b>Bounded scan.</b> Normal and medium levels do not require DNS TXT. Only scan targets you own or are permitted to test.</span>
+            </div>
+          )}
           {error && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{error}</span></div>}
           <div className="form-actions">
-            <button className="button button-primary" type="submit" disabled={busy || !status || !confirmed}>
-              <Crosshair size={15} />{busy ? "Starting…" : "Create scope & run scan"}
+            <button className="button button-primary" type="submit" disabled={busy || !status || !authorizationSatisfied || effectiveProfiles.length === 0}>
+              <Crosshair size={15} />{busy ? (polling ? "Running selected scans…" : "Starting scans…") : "Create scope & run selected scans"}
             </button>
-            <button className="button button-ghost" type="button" onClick={() => void runAgain()} disabled={busy || !lastRun || !confirmed || polling}>
+            <button className="button button-ghost" type="button" onClick={() => void runAgain()} disabled={busy || !lastRun || !lastRunAuthorizationSatisfied || polling}>
               <RefreshCcw size={15} />Run again
             </button>
           </div>
         </form>
       </Panel>
 
-      <Panel title="Live scan" subtitle="The worker runs queued scans in the engine process and records partial failures." tag={scanLabel.toUpperCase()}>
+      <Panel title="Live scans" subtitle="Runs one queued scan per selected profile and combines the results below." tag={scanLabel.toUpperCase()}>
         {scanError && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{scanError}</span></div>}
-        {!scanId && <div className="empty-console">
+        {runs.length === 0 && <div className="empty-console">
           <ScanLine size={22} />
-          <b>No live scan yet</b>
-          <p>Create a scope and run a scan to see the real engine state, assets, services, and TLS metadata here.</p>
+          <b>No live scans yet</b>
+          <p>Select Nmap, Subfinder, or another tool above, choose a scan level, complete DNS TXT verification for high or deep, and create the scope. The selected scans run independently and their results are combined here.</p>
         </div>}
-        {scanId && <>
+        {runs.length > 0 && <>
           <div className="engine-state-row">
-            <StateTag tone={scanTone(scanStatus?.state ?? "queued")}>{(scanStatus?.state ?? "queued").toUpperCase()}</StateTag>
-            <CodeLabel>{scanId}</CodeLabel>
+            <StateTag tone={scanTone(batchState)}>{batchState.toUpperCase()}</StateTag>
+            <CodeLabel>{runs.length} PROFILE(S)</CodeLabel>
             {polling && <span className="engine-status"><RefreshCcw className="spin" size={12} /> polling engine</span>}
+          </div>
+          <div className="scope-list">
+            {runs.map((run) => <div className="scope-row" key={`${run.profileId}-${run.scanId ?? "missing"}`}>
+              <div><b>{PROFILE_SHORT_LABELS[run.profileId] ?? run.profileId}</b><small>{run.scanId ?? "scan was not created"}</small></div>
+              <div><small>{run.error ?? (run.result ? `${run.result.assets.length} asset(s) / ${run.result.services.length} service(s)` : "Waiting for result")}</small></div>
+              <StateTag tone={scanTone(run.state)}>{run.state.toUpperCase()}</StateTag>
+            </div>)}
           </div>
           <div className="result-grid">
             <div className="result-card"><span>TARGET</span><b>{lastRun?.target ?? "—"}</b><small>{lastRun?.scopeId ?? ""}</small></div>
-            <div className="result-card"><span>PROFILE</span><b>{lastRun?.profileId ?? "—"}</b><small>Allowlisted adapter</small></div>
-            <div className="result-card"><span>ASSETS</span><b>{scanResult?.assets.length ?? "—"}</b><small>{scanResult ? `${scanResult.services.length} service record(s)` : "Waiting for completion"}</small></div>
+            <div className="result-card"><span>PROFILES</span><b>{runs.length}</b><small>{runs.map((run) => PROFILE_SHORT_LABELS[run.profileId] ?? run.profileId).join(", ")}</small></div>
+            <div className="result-card"><span>ASSETS / SERVICES</span><b>{assets.length} / {services.length}</b><small>{tlsFindings.length} TLS finding(s)</small></div>
           </div>
-          {scanResult?.tlsFindings.map((finding) => <div className="tls-block" key={`${finding.subject}-${finding.expires_at}`}>
+          {tlsFindings.map((finding) => <div className="tls-block" key={`${finding.subject}-${finding.expires_at}-${finding.status}`}>
             <div className="panel-tag">TLS METADATA</div>
             <div className="kv-list">
               <div className="kv-row"><span>SUBJECT</span><b>{finding.subject}</b></div>
@@ -371,15 +725,15 @@ export default function Targets() {
               <div className="kv-row"><span>STATUS</span><b>{finding.status}</b></div>
             </div>
           </div>)}
-          {scanResult && scanResult.assets.length > 0 && <div className="tls-block">
+          {assets.length > 0 && <div className="tls-block">
             <div className="panel-tag">ASSETS</div>
-            <div className="kv-list">{scanResult.assets.map((asset) => <div className="kv-row" key={asset}><span>ASSET</span><b>{asset}</b></div>)}</div>
+            <div className="kv-list">{assets.map((asset) => <div className="kv-row" key={asset}><span>ASSET</span><b>{asset}</b></div>)}</div>
           </div>}
-          {scanResult && scanResult.services.length > 0 && <div className="tls-block">
+          {services.length > 0 && <div className="tls-block">
             <div className="panel-tag">SERVICES</div>
-            <div className="kv-list">{scanResult.services.map((service, index) => <div className="kv-row" key={`${service.asset}-${service.port}-${index}`}><span>{service.protocol.toUpperCase()} / {service.port}</span><b>{service.asset} · {service.product ?? "unknown"}{service.version ? ` ${service.version}` : ""}</b></div>)}</div>
+            <div className="kv-list">{services.map((service, index) => <div className="kv-row" key={`${service.asset}-${service.protocol}-${service.port}-${index}`}><span>{service.protocol.toUpperCase()} / {service.port}</span><b>{service.asset} · {service.product ?? "unknown"}{service.version ? ` ${service.version}` : ""}</b></div>)}</div>
           </div>}
-          {scanResult?.warnings.map((warning) => <div className="console-alert info" key={warning}><TriangleAlert size={15} /><span>{warning}</span></div>)}
+          {warnings.map((warning) => <div className="console-alert info" key={warning}><TriangleAlert size={15} /><span>{warning}</span></div>)}
         </>}
       </Panel>
     </div>

@@ -87,6 +87,19 @@ export type EngineScope = {
   expiresAt: string;
 };
 
+export type AuthorizationChallenge = {
+  challengeId: string;
+  recordName: string;
+  token: string;
+  expiresAt: string;
+};
+
+export type TargetAuthorization = {
+  authorizationId: string;
+  target: string;
+  expiresAt: string;
+};
+
 export type EngineScan = {
   scanId: string;
   scopeId: string;
@@ -145,11 +158,110 @@ export const TERMINAL_SCAN_STATES = new Set([
   "cancelled",
 ]);
 
+export type ScanLevel = "normal" | "medium" | "high" | "deep";
+
+export type ScanLevelDefinition = {
+  id: ScanLevel;
+  label: string;
+  description: string;
+  requiresAuthorization: boolean;
+};
+
+export const SCAN_LEVELS: ScanLevelDefinition[] = [
+  {
+    id: "normal",
+    label: "Normal",
+    description: "Nmap top 100 TCP; Subfinder default sources.",
+    requiresAuthorization: false,
+  },
+  {
+    id: "medium",
+    label: "Medium",
+    description: "Nmap top 1,000 + versions; Subfinder all sources.",
+    requiresAuthorization: false,
+  },
+  {
+    id: "high",
+    label: "High",
+    description: "Nmap all TCP + light versions; Subfinder recursive sources.",
+    requiresAuthorization: true,
+  },
+  {
+    id: "deep",
+    label: "Deep",
+    description: "Nmap all TCP + full versions; Subfinder recursive, longer collection.",
+    requiresAuthorization: true,
+  },
+];
+
+export const LEVEL_PROFILE_IDS: Record<
+  "nmap" | "subfinder",
+  Record<ScanLevel, string>
+> = {
+  nmap: {
+    normal: "service_inventory_normal_v1",
+    medium: "service_inventory_medium_v1",
+    high: "service_inventory_high_v1",
+    deep: "service_inventory_deep_v1",
+  },
+  subfinder: {
+    normal: "passive_subdomain_normal_v1",
+    medium: "passive_subdomain_medium_v1",
+    high: "passive_subdomain_high_v1",
+    deep: "passive_subdomain_deep_v1",
+  },
+};
+
+export function scanLevelRequiresAuthorization(level: ScanLevel): boolean {
+  return level === "high" || level === "deep";
+}
+
+export function profileTimeoutSeconds(profileId: string): number {
+  const timeouts: Record<string, number> = {
+    synthetic_inventory_v1: 30,
+    tls_metadata_v1: 15,
+    service_inventory_v1: 120,
+    service_inventory_normal_v1: 120,
+    service_inventory_medium_v1: 300,
+    service_inventory_high_v1: 900,
+    service_inventory_deep_v1: 1800,
+    passive_subdomain_v1: 120,
+    passive_subdomain_normal_v1: 120,
+    passive_subdomain_medium_v1: 300,
+    passive_subdomain_high_v1: 600,
+    passive_subdomain_deep_v1: 900,
+  };
+  return timeouts[profileId] ?? 120;
+}
+
 export const PROFILE_LABELS: Record<string, string> = {
   tls_metadata_v1: "TLS metadata — one real read on port 443",
   synthetic_inventory_v1: "Synthetic inventory — fixture, no network",
-  service_inventory_v1: "Nmap top-100 — real TCP service scan",
-  passive_subdomain_v1: "Subfinder — real passive discovery",
+  service_inventory_v1: "Nmap service scan — level selected below",
+  passive_subdomain_v1: "Subfinder — level selected below",
+  service_inventory_normal_v1: "Nmap normal — top 100 TCP ports",
+  service_inventory_medium_v1: "Nmap medium — top 1,000 ports + versions",
+  service_inventory_high_v1: "Nmap high — all TCP ports + light versions",
+  service_inventory_deep_v1: "Nmap deep — all TCP ports + full versions",
+  passive_subdomain_normal_v1: "Subfinder normal — default sources",
+  passive_subdomain_medium_v1: "Subfinder medium — all sources",
+  passive_subdomain_high_v1: "Subfinder high — recursive sources",
+  passive_subdomain_deep_v1: "Subfinder deep — recursive, longer collection",
+};
+
+export const PROFILE_SHORT_LABELS: Record<string, string> = {
+  tls_metadata_v1: "TLS metadata",
+  synthetic_inventory_v1: "Synthetic inventory",
+  service_inventory_v1: "Nmap service scan",
+  passive_subdomain_v1: "Subfinder passive",
+  service_inventory_normal_v1: "Nmap normal",
+  service_inventory_medium_v1: "Nmap medium",
+  service_inventory_high_v1: "Nmap high",
+  service_inventory_deep_v1: "Nmap deep",
+  passive_subdomain_normal_v1: "Subfinder normal",
+  passive_subdomain_medium_v1: "Subfinder medium",
+  passive_subdomain_high_v1: "Subfinder high",
+  passive_subdomain_deep_v1: "Subfinder deep",
 };
 
 export function normalizeTarget(input: string): { host: string; error: string | null } {

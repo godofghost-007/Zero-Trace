@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .recon import (
     InMemoryReconRepository,
     NormalizedService,
+    PROFILES,
     ReconEngine,
     ReconError,
     ReconResult,
@@ -19,6 +20,7 @@ from .recon import (
     ReconRunState,
     Scope,
     Target,
+    profile_requires_authorization,
 )
 from .recon_authorization import AuthorizationRegistry, AuthorizationVerificationError
 from .security import AuthorizationError, Principal, require_role
@@ -71,6 +73,7 @@ class ScopeRequest(BaseModel):
     )
     profiles: tuple[str, ...] = Field(min_length=1, max_length=4)
     expiresInHours: int = Field(default=24, ge=1, le=168)
+    authorizationId: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class AuthorizationChallengeRequest(BaseModel):
@@ -372,6 +375,33 @@ def create_recon_app(
         existing = queue._scopes.get(payload.scopeId)
         if existing is not None and existing.owner_id != actor.subject:
             raise AuthorizationError("Authorization denied", 403)
+        unknown = [
+            profile_id
+            for profile_id in payload.profiles
+            if profile_id not in PROFILES
+        ]
+        if unknown:
+            raise ReconError("profile is not allowlisted")
+        requires_authorization = payload.environment == "isolated_lab" or any(
+            profile_requires_authorization(profile_id)
+            for profile_id in payload.profiles
+        )
+        if requires_authorization and payload.environment != "isolated_lab":
+            raise AuthorizationError("Authorization denied", 403)
+        if requires_authorization:
+            if queue.authorization_registry is None or payload.authorizationId is None:
+                raise AuthorizationError("Authorization denied", 403)
+            try:
+                for target in payload.targets:
+                    for profile_id in payload.profiles:
+                        queue.authorization_registry.authorize(
+                            payload.authorizationId,
+                            owner_id=actor.subject,
+                            target=target,
+                            profile_id=profile_id,
+                        )
+            except AuthorizationVerificationError as error:
+                raise AuthorizationError("Authorization denied", 403) from error
         scope = Scope(
             scope_id=payload.scopeId,
             owner_id=actor.subject,
@@ -382,7 +412,7 @@ def create_recon_app(
             + timedelta(hours=payload.expiresInHours),
             profiles=payload.profiles,
         )
-        queue.add_scope(scope)
+        queue.add_scope(scope, payload.authorizationId)
         return scope_view(scope)
 
     @app.post("/api/v1/recon/scans", status_code=202)
@@ -397,6 +427,11 @@ def create_recon_app(
             raise AuthorizationError("Authorization denied", 403)
         target = Target(payload.target, "domain")
         scope.require_target(target, payload.profileId, datetime.now(timezone.utc))
+        if (
+            profile_requires_authorization(payload.profileId)
+            and scope.environment != "isolated_lab"
+        ):
+            raise AuthorizationError("Authorization denied", 403)
         if scope.environment == "isolated_lab":
             authorization_id = queue._scope_authorizations.get(scope.scope_id)
             if queue.authorization_registry is None or authorization_id is None:

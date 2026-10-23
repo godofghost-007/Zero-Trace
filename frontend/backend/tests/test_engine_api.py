@@ -1,7 +1,10 @@
+from io import BytesIO
+from urllib.error import HTTPError
+
 import pytest
 
 from backend import create_app
-from backend.services.engine import EngineError
+from backend.services.engine import EngineClient, EngineError
 
 
 @pytest.fixture()
@@ -198,6 +201,24 @@ def test_engine_readiness_forwards_the_engine_result(client, monkeypatch):
     assert response.status_code == 200
     assert response.json["readiness"] == "incomplete"
     assert calls == [("GET", "/api/v1/engine/readiness", None)]
+
+
+def test_engine_client_preserves_authorization_denials(monkeypatch):
+    def forbidden(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            403,
+            "Forbidden",
+            {},
+            BytesIO(b'{"error":{"message":"Authorization denied"}}'),
+        )
+
+    monkeypatch.setattr("backend.services.engine.urlopen", forbidden)
+    engine = EngineClient("http://127.0.0.1:8765", "sk-test")
+    with pytest.raises(EngineError) as error:
+        engine.request("POST", "/api/v1/recon/authorizations", {})
+    assert error.value.status_code == 403
+    assert "authorization denied" in str(error.value).lower()
 
 
 def test_engine_test_reports_a_safe_failure(client, monkeypatch):

@@ -96,8 +96,11 @@ class ReconProfile:
     max_output_bytes: int
     max_results: int
     rate_limit_per_minute: int
+    level: str = "normal"
 
     def __post_init__(self) -> None:
+        if self.level not in {"normal", "medium", "high", "deep"}:
+            raise ReconError("profile level is invalid")
         if min(
             self.timeout_seconds,
             self.max_targets,
@@ -139,8 +142,88 @@ PROFILES: Mapping[str, ReconProfile] = {
     "passive_subdomain_v1": ReconProfile(
         "passive_subdomain_v1", "subfinder", 120, 10, 2 * 1024 * 1024, 10_000, 60
     ),
+    "passive_subdomain_normal_v1": ReconProfile(
+        "passive_subdomain_normal_v1",
+        "subfinder",
+        120,
+        10,
+        2 * 1024 * 1024,
+        10_000,
+        60,
+        level="normal",
+    ),
+    "passive_subdomain_medium_v1": ReconProfile(
+        "passive_subdomain_medium_v1",
+        "subfinder",
+        300,
+        10,
+        4 * 1024 * 1024,
+        25_000,
+        30,
+        level="medium",
+    ),
+    "passive_subdomain_high_v1": ReconProfile(
+        "passive_subdomain_high_v1",
+        "subfinder",
+        600,
+        10,
+        8 * 1024 * 1024,
+        50_000,
+        10,
+        level="high",
+    ),
+    "passive_subdomain_deep_v1": ReconProfile(
+        "passive_subdomain_deep_v1",
+        "subfinder",
+        900,
+        10,
+        16 * 1024 * 1024,
+        100_000,
+        5,
+        level="deep",
+    ),
     "service_inventory_v1": ReconProfile(
         "service_inventory_v1", "nmap", 120, 100, 4 * 1024 * 1024, 10_000, 60
+    ),
+    "service_inventory_normal_v1": ReconProfile(
+        "service_inventory_normal_v1",
+        "nmap",
+        120,
+        100,
+        4 * 1024 * 1024,
+        10_000,
+        60,
+        level="normal",
+    ),
+    "service_inventory_medium_v1": ReconProfile(
+        "service_inventory_medium_v1",
+        "nmap",
+        300,
+        100,
+        8 * 1024 * 1024,
+        20_000,
+        30,
+        level="medium",
+    ),
+    "service_inventory_high_v1": ReconProfile(
+        "service_inventory_high_v1",
+        "nmap",
+        900,
+        100,
+        16 * 1024 * 1024,
+        50_000,
+        10,
+        level="high",
+    ),
+    "service_inventory_deep_v1": ReconProfile(
+        "service_inventory_deep_v1",
+        "nmap",
+        1800,
+        100,
+        32 * 1024 * 1024,
+        100_000,
+        5,
+        level="deep",
     ),
     "tls_metadata_v1": ReconProfile(
         "tls_metadata_v1", "tls", 15, 100, 64 * 1024, 1_000, 60
@@ -149,6 +232,15 @@ PROFILES: Mapping[str, ReconProfile] = {
         "s3_read_only_v1", "s3_read_only", 30, 100, 64 * 1024, 1_000, 30
     ),
 }
+
+AUTHORIZATION_REQUIRED_LEVELS = frozenset({"high", "deep"})
+
+
+def profile_requires_authorization(profile_id: str) -> bool:
+    """Return whether a profile needs DNS TXT ownership verification."""
+
+    profile = PROFILES.get(profile_id)
+    return profile is not None and profile.level in AUTHORIZATION_REQUIRED_LEVELS
 
 
 @dataclass(frozen=True)
@@ -170,7 +262,10 @@ class NormalizedService:
 @dataclass(frozen=True)
 class AdapterResult:
     assets: tuple[str, ...]
-    services: tuple[tuple[str, str, int, str], ...]
+    services: tuple[
+        tuple[str, str, int, str] | tuple[str, str, int, str, str | None],
+        ...,
+    ]
     warnings: tuple[str, ...]
     state: ReconRunState = ReconRunState.COMPLETED
     tls_findings: tuple[Mapping[str, str], ...] = ()
@@ -458,14 +553,30 @@ class SubprocessRunner:
         return stdout
 
 
+SUBFINDER_LEVEL_ARGUMENTS: Mapping[str, tuple[str, ...]] = {
+    "normal": (),
+    "medium": ("-all",),
+    "high": ("-all", "-recursive"),
+    "deep": ("-all", "-recursive", "-timeout", "60", "-max-time", "12"),
+}
+
+
 class SubfinderAdapter:
     def __init__(self, executable: str, runner: CommandRunner) -> None:
         self.executable = executable
         self.runner = runner
 
     def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
+        level_arguments = SUBFINDER_LEVEL_ARGUMENTS[profile.level]
         output = self.runner.run(
-            (self.executable, "-d", target.value, "-silent", "-json"),
+            (
+                self.executable,
+                "-d",
+                target.value,
+                *level_arguments,
+                "-silent",
+                "-json",
+            ),
             profile.timeout_seconds,
             profile.max_output_bytes,
         )
@@ -483,6 +594,14 @@ class SubfinderAdapter:
         return AdapterResult(tuple(assets), (), tuple(warnings), state)
 
 
+NMAP_LEVEL_ARGUMENTS: Mapping[str, tuple[str, ...]] = {
+    "normal": ("--top-ports", "100"),
+    "medium": ("-sV", "--top-ports", "1000"),
+    "high": ("-sV", "-p-", "--version-light"),
+    "deep": ("-sV", "-p-", "--version-all"),
+}
+
+
 class NmapAdapter:
     def __init__(
         self,
@@ -496,11 +615,14 @@ class NmapAdapter:
         self.ports = _validate_ports(ports)
 
     def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
-        port_arguments = (
-            ("-p", self.ports)
-            if self.ports is not None
-            else ("--top-ports", "100")
-        )
+        if self.ports is not None and profile.level in {"normal", "medium"}:
+            port_arguments = (
+                ("-sV", "-p", self.ports)
+                if profile.level == "medium"
+                else ("-p", self.ports)
+            )
+        else:
+            port_arguments = NMAP_LEVEL_ARGUMENTS[profile.level]
         output = self.runner.run(
             (
                 self.executable,
@@ -517,7 +639,9 @@ class NmapAdapter:
             root = ElementTree.fromstring(output)
         except ElementTree.ParseError as error:
             raise ReconError("scanner XML is malformed") from error
-        services: list[tuple[str, str, int, str]] = []
+        services: list[
+            tuple[str, str, int, str] | tuple[str, str, int, str, str | None]
+        ] = []
         for port in root.findall(".//port"):
             state = port.find("state")
             service = port.find("service")
@@ -528,7 +652,22 @@ class NmapAdapter:
             except (KeyError, ValueError) as error:
                 raise ReconError("scanner port is malformed") from error
             name = "unknown" if service is None else service.attrib.get("name", "unknown")
-            services.append((target.value, port.attrib.get("protocol", "tcp"), number, name))
+            if profile.level == "normal":
+                services.append(
+                    (target.value, port.attrib.get("protocol", "tcp"), number, name)
+                )
+                continue
+            product = "unknown" if service is None else service.attrib.get("product", name)
+            version = None if service is None else service.attrib.get("version")
+            services.append(
+                (
+                    target.value,
+                    port.attrib.get("protocol", "tcp"),
+                    number,
+                    product,
+                    version,
+                )
+            )
         warnings = ("no ports observed / may be filtered",) if not services else ()
         return AdapterResult((target.value,), tuple(services), warnings)
 
@@ -595,11 +734,17 @@ def _normalize_result(result: AdapterResult, profile: ReconProfile) -> ReconResu
     if len(result.assets) > profile.max_results or len(result.services) > profile.max_results:
         raise ReconError("result count exceeds the configured limit")
     assets = tuple(dict.fromkeys(_normalize_domain(asset) for asset in result.assets))
-    services = tuple(
-        NormalizedService(asset, protocol, port, product)
-        for asset, protocol, port, product in result.services
-    )
-    return ReconResult(assets, services, result.tls_findings)
+    services: list[NormalizedService] = []
+    for item in result.services:
+        if len(item) == 4:
+            asset, protocol, port, product = item
+            version = None
+        elif len(item) == 5:
+            asset, protocol, port, product, version = item
+        else:
+            raise ReconError("adapter service shape is invalid")
+        services.append(NormalizedService(asset, protocol, port, product, version))
+    return ReconResult(assets, tuple(services), result.tls_findings)
 
 
 def _inventory_delta(

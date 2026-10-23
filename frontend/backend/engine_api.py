@@ -185,13 +185,70 @@ def create_engine_scope():
         )
     fields = _only(
         payload,
-        {"authorized", "scopeId", "targets", "environment", "profiles", "expiresInHours"},
+        {
+            "authorized",
+            "scopeId",
+            "targets",
+            "environment",
+            "profiles",
+            "expiresInHours",
+            "authorizationId",
+        },
     )
     fields.pop("authorized", None)
     if not isinstance(fields.get("targets"), list) or not fields["targets"]:
         return _error("invalid_request", "At least one target is required.", 400)
     return jsonify(
         _client().request("POST", "/api/v1/recon/scopes", fields, timeout=8.0)
+    ), 201
+
+
+@engine_api.post("/engine/authorizations/challenges")
+def create_engine_authorization_challenge():
+    payload = _json_body()
+    if payload is None:
+        return _error("invalid_request", "A JSON object is required.", 400)
+    fields = _only(payload, {"domain"})
+    domain = fields.get("domain")
+    if not isinstance(domain, str) or not domain.strip() or len(domain) > 253:
+        return _error("invalid_request", "A domain is required.", 400)
+    return jsonify(
+        _client().request(
+            "POST",
+            "/api/v1/recon/authorizations/challenges",
+            {"domain": domain.strip()},
+            timeout=8.0,
+        )
+    ), 201
+
+
+@engine_api.post("/engine/authorizations")
+def verify_engine_authorization():
+    payload = _json_body()
+    if payload is None:
+        return _error("invalid_request", "A JSON object is required.", 400)
+    fields = _only(payload, {"challengeId", "profileIds"})
+    challenge_id = fields.get("challengeId")
+    profile_ids = fields.get("profileIds")
+    if not isinstance(challenge_id, str) or not challenge_id.strip():
+        return _error("invalid_request", "A challengeId is required.", 400)
+    if (
+        not isinstance(profile_ids, list)
+        or not 1 <= len(profile_ids) <= 4
+        or any(not isinstance(item, str) or not item.strip() for item in profile_ids)
+    ):
+        return _error(
+            "invalid_request",
+            "profileIds must contain one to four profile identifiers.",
+            400,
+        )
+    return jsonify(
+        _client().request(
+            "POST",
+            "/api/v1/recon/authorizations",
+            {"challengeId": challenge_id, "profileIds": profile_ids},
+            timeout=12.0,
+        )
     ), 201
 
 

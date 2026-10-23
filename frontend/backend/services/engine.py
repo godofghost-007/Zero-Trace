@@ -221,7 +221,7 @@ class EngineClient:
         except HTTPError as error:
             body = error.read(MAX_RESPONSE_BYTES)
             message = _error_message(body)
-            if error.code in {401, 403}:
+            if error.code == 401:
                 raise EngineError(
                     "Live engine rejected the configured API key.", 502
                 ) from error

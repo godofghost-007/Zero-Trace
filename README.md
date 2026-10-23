@@ -139,9 +139,9 @@ not start Recon adapters, the live engine, or a model.
    CSRF token.
 2. Open **Engine Settings**, keep the default loopback URL, and select **Test
    connection**. The engine key stays on the Flask side.
-3. Open **Targets & Scope**, create a scope with an explicit authorization
-   acknowledgement, then run the TLS-metadata profile (the default) or the
-   synthetic inventory profile.
+3. Open **Targets & Scope**, choose the tools and a scan level, then create the
+   scope. Normal and Medium are bounded and need no DNS TXT; High and Deep
+   require DNS TXT ownership verification. The default is Normal.
 4. In **Targets & Scope**, use the live **Intel engine** panel to run the CISA
    KEV sync. The UI exposes KEV only; NVD and EPSS run on the schedule.
 5. In the same page, use the live **Guard inspection** panel to run the
@@ -155,10 +155,12 @@ readiness snapshots survive an engine restart.
 
 ## Safety boundaries
 
-- Scope and scan creation require `authorized: true` in the BFF and the engine.
+- The BFF requires `authorized: true` for scope and scan creation.
+- High and Deep profiles require DNS TXT ownership verification; Normal and
+  Medium do not.
 - Scan targets must be inside an approved, unexpired scope.
 - Profiles are allowlisted; unavailable adapters are not advertised.
-- The default live scan is a single bounded TLS metadata read.
+- The default live selection is Nmap and Subfinder at Normal level.
 - Recon rate limits, timeouts, output-size limits, and retry ceilings apply.
 - The engine binds to loopback only; the BFF rejects non-loopback URLs.
 - The browser never receives the engine API key.
@@ -169,6 +171,23 @@ readiness snapshots survive an engine restart.
 - Guard inspection does not call an upstream model.
 - No exploitation, brute force, credential attack, or automatic remediation is
   implemented.
+
+## Scan levels
+
+Nmap and Subfinder share four operator-selected levels. Normal is the default.
+The BFF still requires `authorized: true` for every scope and scan. High and Deep
+also require a DNS TXT challenge and an `isolated_lab` scope.
+
+| Level | Nmap | Subfinder | DNS TXT |
+|---|---|---|---|
+| Normal | `nmap -sT --top-ports 100 -oX - <target>` | `subfinder -d <domain> -silent -json` | No |
+| Medium | `nmap -sT -sV --top-ports 1000 -oX - <target>` | `subfinder -d <domain> -all -silent -json` | No |
+| High | `nmap -sT -sV -p- --version-light -oX - <target>` | `subfinder -d <domain> -all -recursive -silent -json` | Yes |
+| Deep | `nmap -sT -sV -p- --version-all -oX - <target>` | `subfinder -d <domain> -all -recursive -timeout 60 -max-time 12 -silent -json` | Yes |
+
+`ZEROTRACE_NMAP_PORTS` overrides the port list only for Normal and Medium. High
+and Deep always scan all TCP ports. High and Deep are slower, more visible, and
+must only run against targets you own or are explicitly authorized to test.
 
 ## Verification
 
@@ -227,6 +246,12 @@ Phase 16 closes the login/RBAC, PostgreSQL, real-lab scanner, scheduled-feed,
 and backup/restore gaps. Evidence is
 [tasks/evidence/phase-16.md](tasks/evidence/phase-16.md); human signoff is
 pending.
+
+For a presenter-oriented walkthrough, exact demo commands, Nmap/Subfinder
+profiles, and the remaining-gap scorecard, see
+[docs/DEMO-GUIDE.md](docs/DEMO-GUIDE.md). For the production gap review and
+delivery estimate, see
+[docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
 
 ## Repository layout
 

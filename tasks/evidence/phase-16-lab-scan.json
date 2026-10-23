@@ -1,12 +1,12 @@
 {
   "ok": true,
-  "generatedAt": "2026-10-22T18:37:34.292819+00:00",
+  "generatedAt": "2026-10-22T19:50:57.073324+00:00",
   "engine": "http://127.0.0.1:8765",
   "engineHealth": {
     "status": "healthy"
   },
   "scope": {
-    "scopeId": "lab-scan-20261022t183625z",
+    "scopeId": "lab-scan-20261022t195028z",
     "targets": [
       "lab-tls.127.0.0.1.nip.io",
       "lab.zerotrace.local"
@@ -18,7 +18,7 @@
       "passive_subdomain_v1"
     ],
     "approved": true,
-    "expiresAt": "2026-10-22T19:36:25.263806+00:00"
+    "expiresAt": "2026-10-22T20:50:28.174381+00:00"
   },
   "environmentNote": "The isolated lab is reached through loopback-published Docker ports. The scope uses the synthetic environment label because isolated_lab requires a public DNS TXT challenge; the scope itself is explicit, time-bounded, and limited to the two lab hostnames.",
   "targets": [
@@ -27,13 +27,13 @@
   ],
   "runs": [
     {
-      "scanId": "57290082-b6a9-4f5b-a54a-281a9592f8fd",
+      "scanId": "4f2aa532-3946-44b9-befe-4f49efda1f70",
       "target": "lab-tls.127.0.0.1.nip.io",
       "profileId": "service_inventory_v1",
       "state": "completed",
-      "durationSeconds": 21.286,
+      "durationSeconds": 18.195,
       "result": {
-        "scanId": "57290082-b6a9-4f5b-a54a-281a9592f8fd",
+        "scanId": "4f2aa532-3946-44b9-befe-4f49efda1f70",
         "state": "completed",
         "target": "lab-tls.127.0.0.1.nip.io",
         "profileId": "service_inventory_v1",
@@ -71,13 +71,13 @@
       }
     },
     {
-      "scanId": "a7ccc54c-b682-4f0e-b402-c659398c9e79",
+      "scanId": "90b72b07-fe84-4489-af8a-bc8af2911d3f",
       "target": "lab-tls.127.0.0.1.nip.io",
       "profileId": "tls_metadata_v1",
       "state": "completed",
-      "durationSeconds": 3.247,
+      "durationSeconds": 1.106,
       "result": {
-        "scanId": "a7ccc54c-b682-4f0e-b402-c659398c9e79",
+        "scanId": "90b72b07-fe84-4489-af8a-bc8af2911d3f",
         "state": "completed",
         "target": "lab-tls.127.0.0.1.nip.io",
         "profileId": "tls_metadata_v1",
@@ -89,7 +89,7 @@
           {
             "subject": "lab-tls.zerotrace.local",
             "issuer": "lab-tls.zerotrace.local",
-            "expires_at": "Oct 24 18:35:08 2026 GMT",
+            "expires_at": "Oct 24 19:24:03 2026 GMT",
             "status": "unverified"
           }
         ],
@@ -97,13 +97,13 @@
       }
     },
     {
-      "scanId": "21c45d68-ccb8-4df3-9951-079b9e8301c7",
+      "scanId": "a6807d6d-ccb5-4242-a8bd-fd5dfb3ad473",
       "target": "lab.zerotrace.local",
       "profileId": "passive_subdomain_v1",
       "state": "completed",
-      "durationSeconds": 44.408,
+      "durationSeconds": 9.174,
       "result": {
-        "scanId": "21c45d68-ccb8-4df3-9951-079b9e8301c7",
+        "scanId": "a6807d6d-ccb5-4242-a8bd-fd5dfb3ad473",
         "state": "completed",
         "target": "lab.zerotrace.local",
         "profileId": "passive_subdomain_v1",

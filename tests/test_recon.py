@@ -266,6 +266,90 @@ class ReconAdapterTests(unittest.TestCase):
         self.assertEqual(result.services, (("lab.example.test", "tcp", 443, "https"),))
         self.assertEqual(result.warnings, ())
 
+    def test_nmap_levels_escalate_from_normal_to_deep(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        class Runner:
+            def run(self, args: tuple[str, ...], timeout_seconds: int, max_output_bytes: int) -> bytes:
+                calls.append(args)
+                return b"<nmaprun><host><ports/></host></nmaprun>"
+
+        for profile_id in (
+            "service_inventory_normal_v1",
+            "service_inventory_medium_v1",
+            "service_inventory_high_v1",
+            "service_inventory_deep_v1",
+        ):
+            NmapAdapter("nmap", Runner()).run(target(), PROFILES[profile_id])
+
+        self.assertEqual(
+            calls,
+            [
+                ("nmap", "-sT", "--top-ports", "100", "-oX", "-", "lab.example.test"),
+                ("nmap", "-sT", "-sV", "--top-ports", "1000", "-oX", "-", "lab.example.test"),
+                ("nmap", "-sT", "-sV", "-p-", "--version-light", "-oX", "-", "lab.example.test"),
+                ("nmap", "-sT", "-sV", "-p-", "--version-all", "-oX", "-", "lab.example.test"),
+            ],
+        )
+
+    def test_nmap_medium_preserves_product_and_version(self) -> None:
+        class Runner:
+            def run(self, args: tuple[str, ...], timeout_seconds: int, max_output_bytes: int) -> bytes:
+                return (
+                    b"<nmaprun><host><ports><port protocol='tcp' portid='443'>"
+                    b"<state state='open'/><service name='http' product='nginx' version='1.24.0'/>"
+                    b"</port></ports></host></nmaprun>"
+                )
+
+        result = NmapAdapter("nmap", Runner()).run(
+            target(), PROFILES["service_inventory_medium_v1"]
+        )
+
+        self.assertEqual(
+            result.services,
+            (("lab.example.test", "tcp", 443, "nginx", "1.24.0"),),
+        )
+
+    def test_subfinder_levels_escalate_from_normal_to_deep(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        class Runner:
+            def run(self, args: tuple[str, ...], timeout_seconds: int, max_output_bytes: int) -> bytes:
+                calls.append(args)
+                return b""
+
+        for profile_id in (
+            "passive_subdomain_normal_v1",
+            "passive_subdomain_medium_v1",
+            "passive_subdomain_high_v1",
+            "passive_subdomain_deep_v1",
+        ):
+            SubfinderAdapter("subfinder", Runner()).run(
+                target(), PROFILES[profile_id]
+            )
+
+        self.assertEqual(
+            calls,
+            [
+                ("subfinder", "-d", "lab.example.test", "-silent", "-json"),
+                ("subfinder", "-d", "lab.example.test", "-all", "-silent", "-json"),
+                ("subfinder", "-d", "lab.example.test", "-all", "-recursive", "-silent", "-json"),
+                (
+                    "subfinder",
+                    "-d",
+                    "lab.example.test",
+                    "-all",
+                    "-recursive",
+                    "-timeout",
+                    "60",
+                    "-max-time",
+                    "12",
+                    "-silent",
+                    "-json",
+                ),
+            ],
+        )
+
     def test_nmap_lab_port_override_is_bounded(self) -> None:
         calls: list[tuple[str, ...]] = []
 

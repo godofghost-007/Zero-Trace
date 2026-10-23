@@ -242,6 +242,166 @@ class ReconApiTests(unittest.TestCase):
         self.assertEqual(verification.status_code, 201)
         self.assertEqual(verification.json()["target"], "example.com")
 
+    def test_verified_public_scope_can_queue_scan(self) -> None:
+        class Resolver(DnsTxtResolver):
+            def __init__(self) -> None:
+                self.records: dict[str, tuple[str, ...]] = {}
+
+            def txt_records(self, name: str) -> tuple[str, ...]:
+                return self.records.get(name, ())
+
+        resolver = Resolver()
+        registry = AuthorizationRegistry(resolver)
+        repository = InMemoryReconRepository()
+        engine = ReconEngine(
+            repository,
+            {
+                "synthetic_inventory_v1": SyntheticAdapter(
+                    AdapterResult(("example.com",), (), ())
+                )
+            },
+        )
+        queue = ReconQueue(engine, repository, registry)
+        client = TestClient(
+            create_recon_app(queue, lambda request: Principal("operator-1", "operator"))
+        )
+        challenge = client.post(
+            "/api/v1/recon/authorizations/challenges",
+            json={"domain": "example.com"},
+        ).json()
+        resolver.records[challenge["recordName"]] = (challenge["token"],)
+        verification = client.post(
+            "/api/v1/recon/authorizations",
+            json={
+                "challengeId": challenge["challengeId"],
+                "profileIds": ["synthetic_inventory_v1"],
+            },
+        )
+        self.assertEqual(verification.status_code, 201)
+        authorization_id = verification.json()["authorizationId"]
+
+        created = client.post(
+            "/api/v1/recon/scopes",
+            json={
+                "scopeId": "scope-public",
+                "targets": ["example.com"],
+                "environment": "isolated_lab",
+                "profiles": ["synthetic_inventory_v1"],
+                "authorizationId": authorization_id,
+                "expiresInHours": 1,
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+        queued = client.post(
+            "/api/v1/recon/scans",
+            json={
+                "scopeId": "scope-public",
+                "target": "example.com",
+                "profileId": "synthetic_inventory_v1",
+            },
+        )
+        self.assertEqual(queued.status_code, 202)
+        queue.run_pending()
+        status = client.get(f"/api/v1/recon/scans/{queued.json()['scanId']}")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["state"], "completed")
+
+    def test_isolated_lab_scope_creation_requires_authorization(self) -> None:
+        response = self.client.post(
+            "/api/v1/recon/scopes",
+            headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "operator"},
+            json={
+                "scopeId": "scope-public-missing-auth",
+                "targets": ["example.com"],
+                "environment": "isolated_lab",
+                "profiles": ["synthetic_inventory_v1"],
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_normal_and_medium_scopes_do_not_require_authorization(self) -> None:
+        response = self.client.post(
+            "/api/v1/recon/scopes",
+            headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "operator"},
+            json={
+                "scopeId": "scope-bounded",
+                "targets": ["example.com"],
+                "environment": "synthetic",
+                "profiles": [
+                    "service_inventory_normal_v1",
+                    "passive_subdomain_medium_v1",
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.json()["profiles"],
+            ["service_inventory_normal_v1", "passive_subdomain_medium_v1"],
+        )
+
+    def test_high_and_deep_profiles_require_dns_authorization(self) -> None:
+        for profile_id in (
+            "service_inventory_high_v1",
+            "service_inventory_deep_v1",
+            "passive_subdomain_high_v1",
+            "passive_subdomain_deep_v1",
+        ):
+            response = self.client.post(
+                "/api/v1/recon/scopes",
+                headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "operator"},
+                json={
+                    "scopeId": f"scope-{profile_id}",
+                    "targets": ["example.com"],
+                    "environment": "synthetic",
+                    "profiles": [profile_id],
+                },
+            )
+            self.assertEqual(response.status_code, 403, profile_id)
+
+    def test_verified_high_profile_can_create_isolated_scope(self) -> None:
+        class Resolver(DnsTxtResolver):
+            def __init__(self) -> None:
+                self.records: dict[str, tuple[str, ...]] = {}
+
+            def txt_records(self, name: str) -> tuple[str, ...]:
+                return self.records.get(name, ())
+
+        resolver = Resolver()
+        registry = AuthorizationRegistry(resolver)
+        queue = ReconQueue(
+            InMemoryReconRepository(),
+            InMemoryReconRepository(),
+            registry,
+        )
+        client = TestClient(
+            create_recon_app(queue, lambda request: Principal("operator-1", "operator"))
+        )
+        challenge = client.post(
+            "/api/v1/recon/authorizations/challenges",
+            json={"domain": "example.com"},
+        ).json()
+        resolver.records[challenge["recordName"]] = (challenge["token"],)
+        verification = client.post(
+            "/api/v1/recon/authorizations",
+            json={
+                "challengeId": challenge["challengeId"],
+                "profileIds": ["service_inventory_high_v1"],
+            },
+        )
+        self.assertEqual(verification.status_code, 201)
+        created = client.post(
+            "/api/v1/recon/scopes",
+            json={
+                "scopeId": "scope-high-authorized",
+                "targets": ["example.com"],
+                "environment": "isolated_lab",
+                "profiles": ["service_inventory_high_v1"],
+                "authorizationId": verification.json()["authorizationId"],
+                "expiresInHours": 1,
+            },
+        )
+        self.assertEqual(created.status_code, 201)
+
     def test_viewer_cannot_create_scan_or_read_other_scope(self) -> None:
         response = self.client.post(
             "/api/v1/recon/scans",

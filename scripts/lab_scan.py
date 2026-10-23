@@ -68,7 +68,7 @@ def _wait_for_scan(
     api_key: str,
     scan_id: str,
     *,
-    timeout_seconds: int = 90,
+    timeout_seconds: int = 180,
 ) -> dict[str, object]:
     deadline = time.monotonic() + timeout_seconds
     last_state = "unknown"
@@ -140,7 +140,12 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             {"Idempotency-Key": f"lab-{stamp}-{profile}-{target}"},
         )
         scan_id = str(queued["scanId"])
-        finished = _wait_for_scan(base_url, args.api_key, scan_id)
+        finished = _wait_for_scan(
+            base_url,
+            args.api_key,
+            scan_id,
+            timeout_seconds=args.timeout,
+        )
         runs.append(
             {
                 "scanId": scan_id,
@@ -208,6 +213,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--environment", default="synthetic", choices=("synthetic", "isolated_lab")
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=180,
+        help="Seconds to wait for each bounded scan (default: 180).",
     )
     parser.add_argument(
         "--output",

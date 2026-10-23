@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import os
@@ -73,6 +73,10 @@ from app.recon import (  # noqa: E402
     TLSAdapter,
 )
 from app.recon_api import ReconQueue, create_recon_app  # noqa: E402
+from app.recon_authorization import (  # noqa: E402
+    AuthorizationRegistry,
+    SystemDnsTxtResolver,
+)
 from app.security import (  # noqa: E402
     AuthConfig,
     AuthorizationError,
@@ -343,12 +347,14 @@ def _configured_adapters(settings: EngineSettings | None = None) -> dict[str, ob
     runner = SubprocessRunner()
     nmap = shutil.which("nmap")
     if nmap:
-        adapters["service_inventory_v1"] = NmapAdapter(
-            nmap, runner, ports=settings.nmap_ports
-        )
+        nmap_adapter = NmapAdapter(nmap, runner, ports=settings.nmap_ports)
+        adapters["service_inventory_v1"] = nmap_adapter
+        adapters["nmap"] = nmap_adapter
     subfinder = shutil.which("subfinder")
     if subfinder:
-        adapters["passive_subdomain_v1"] = SubfinderAdapter(subfinder, runner)
+        subfinder_adapter = SubfinderAdapter(subfinder, runner)
+        adapters["passive_subdomain_v1"] = subfinder_adapter
+        adapters["subfinder"] = subfinder_adapter
     return adapters
 
 
@@ -408,6 +414,10 @@ def create_live_engine(
     queue = ReconQueue(
         engine,
         repository,
+        authorization_registry=AuthorizationRegistry(
+            SystemDnsTxtResolver(),
+            challenge_lifetime=timedelta(minutes=60),
+        ),
         persistence=store,
         on_scan_complete=scan_completed,
     )
@@ -542,17 +552,20 @@ def create_live_engine(
         ]
         guard = store.guard_counts()
         readiness = _readiness_payload(queue, intel_repository, store)
+        available_profiles = {
+            profile_id: profile
+            for profile_id, profile in PROFILES.items()
+            if profile_id in adapters or profile.adapter_name in adapters
+        }
         return {
             "service": "zerotrace-live-engine",
             "mode": "live",
             "time": datetime.now(timezone.utc).isoformat(),
             "storage": "sqlite",
-            "adapters": sorted(adapters.keys()),
-            "profiles": sorted(
-                profile_id
-                for profile_id in PROFILES
-                if profile_id in adapters
+            "adapters": sorted(
+                {profile.adapter_name for profile in available_profiles.values()}
             ),
+            "profiles": sorted(available_profiles),
             "scopes": len(scopes),
             "scans": len(jobs),
             "intel": {

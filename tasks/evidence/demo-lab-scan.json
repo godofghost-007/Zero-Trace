@@ -1,0 +1,117 @@
+{
+  "ok": true,
+  "generatedAt": "2026-10-22T19:31:45.436250+00:00",
+  "engine": "http://127.0.0.1:8765",
+  "engineHealth": {
+    "status": "healthy"
+  },
+  "scope": {
+    "scopeId": "lab-scan-20261022t193109z",
+    "targets": [
+      "lab-tls.127.0.0.1.nip.io",
+      "lab.zerotrace.local"
+    ],
+    "environment": "synthetic",
+    "profiles": [
+      "service_inventory_v1",
+      "tls_metadata_v1",
+      "passive_subdomain_v1"
+    ],
+    "approved": true,
+    "expiresAt": "2026-10-22T20:31:09.043041+00:00"
+  },
+  "environmentNote": "The isolated lab is reached through loopback-published Docker ports. The scope uses the synthetic environment label because isolated_lab requires a public DNS TXT challenge; the scope itself is explicit, time-bounded, and limited to the two lab hostnames.",
+  "targets": [
+    "lab-tls.127.0.0.1.nip.io",
+    "lab.zerotrace.local"
+  ],
+  "runs": [
+    {
+      "scanId": "2d810ac9-1cd8-4361-bd08-07f3e4c21a33",
+      "target": "lab-tls.127.0.0.1.nip.io",
+      "profileId": "service_inventory_v1",
+      "state": "completed",
+      "durationSeconds": 16.35,
+      "result": {
+        "scanId": "2d810ac9-1cd8-4361-bd08-07f3e4c21a33",
+        "state": "completed",
+        "target": "lab-tls.127.0.0.1.nip.io",
+        "profileId": "service_inventory_v1",
+        "assets": [
+          "lab-tls.127.0.0.1.nip.io"
+        ],
+        "services": [
+          {
+            "asset": "lab-tls.127.0.0.1.nip.io",
+            "protocol": "tcp",
+            "port": 8080,
+            "product": "http-proxy",
+            "version": null,
+            "tlsStatus": null
+          },
+          {
+            "asset": "lab-tls.127.0.0.1.nip.io",
+            "protocol": "tcp",
+            "port": 8081,
+            "product": "blackice-icecap",
+            "version": null,
+            "tlsStatus": null
+          },
+          {
+            "asset": "lab-tls.127.0.0.1.nip.io",
+            "protocol": "tcp",
+            "port": 8443,
+            "product": "https-alt",
+            "version": null,
+            "tlsStatus": null
+          }
+        ],
+        "tlsFindings": [],
+        "warnings": []
+      }
+    },
+    {
+      "scanId": "0e09bf8e-018c-4f9b-8242-b69266c5ffd1",
+      "target": "lab-tls.127.0.0.1.nip.io",
+      "profileId": "tls_metadata_v1",
+      "state": "completed",
+      "durationSeconds": 2.651,
+      "result": {
+        "scanId": "0e09bf8e-018c-4f9b-8242-b69266c5ffd1",
+        "state": "completed",
+        "target": "lab-tls.127.0.0.1.nip.io",
+        "profileId": "tls_metadata_v1",
+        "assets": [
+          "lab-tls.127.0.0.1.nip.io"
+        ],
+        "services": [],
+        "tlsFindings": [
+          {
+            "subject": "lab-tls.zerotrace.local",
+            "issuer": "lab-tls.zerotrace.local",
+            "expires_at": "Oct 24 19:24:03 2026 GMT",
+            "status": "unverified"
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "scanId": "17ac6dd9-dd46-4b15-9b6c-d7cacb78ae06",
+      "target": "lab.zerotrace.local",
+      "profileId": "passive_subdomain_v1",
+      "state": "completed",
+      "durationSeconds": 17.229,
+      "result": {
+        "scanId": "17ac6dd9-dd46-4b15-9b6c-d7cacb78ae06",
+        "state": "completed",
+        "target": "lab.zerotrace.local",
+        "profileId": "passive_subdomain_v1",
+        "assets": [],
+        "services": [],
+        "tlsFindings": [],
+        "warnings": []
+      }
+    }
+  ]
+}
