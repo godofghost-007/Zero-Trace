@@ -1,0 +1,30 @@
+# Production reverse proxy. Caddy obtains and renews TLS automatically.
+# Set ZEROTRACE_DOMAIN in the environment before starting the stack.
+
+{$ZEROTRACE_DOMAIN} {
+	encode zstd gzip
+
+	request_body {
+		max_size 1MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# The BFF shares the engine network namespace, so it is reachable at
+	# engine:3000 from Caddy while the engine itself stays off the host.
+	reverse_proxy engine:3000 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

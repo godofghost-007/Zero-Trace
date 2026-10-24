@@ -1,20 +1,23 @@
 # ZeroTrace Production Readiness Review
 
-Date: 2026-10-24
-Baseline: local `main` at `6e932a9` plus the current working tree
-Scope: single-tenant, loopback-local demo and the path to a production service
+Date: 2026-10-25
+Baseline: `feature/phase-17-production-hardening` at the Phase 17A/17B/17F
+working tree
+Scope: single-tenant, loopback-local demo and the path to a self-hosted service
 
 ## 1. Honest scorecard
 
 | Measure | Current state | Assessment |
 |---|---|---|
 | Local demo completeness | React UI, Flask BFF, FastAPI engine, real Nmap/Subfinder/TLS adapters, scope authorization, auth/RBAC, audit, KEV sync, readiness panel | **~90%** |
-| Single-tenant production readiness | SQLite live engine, local admin account, development Flask server, no SSO/MFA, no production deployment or observability | **~60%** |
+| Single-tenant production readiness | PostgreSQL live-engine store, versioned migrations, MFA/OIDC/password reset, Caddy + container deployment, CI, production config validation; observability, encrypted offsite backup, restore drill, and release gate remain | **~70%** |
 | Multi-tenant SaaS readiness | No tenant data plane, no per-tenant isolation, no billing/onboarding/SCIM | **not started** |
 
-The project is a working full-stack application. It is not yet a production
-service. The gap is mostly operational hardening, identity, durable storage,
-deployment, and evidence, not missing UI or missing core logic.
+The project is a working full-stack application with a credible self-hosted
+deployment path. It is not yet a production-ready release: Phase 17C–17E and
+the Phase 18 gate are still open. The gap is mostly operational evidence,
+observability, backup/restore, scanner runtime controls, and release process,
+not missing UI or missing core logic.
 
 ## 2. What is already real
 
@@ -29,16 +32,21 @@ deployment, and evidence, not missing UI or missing core logic.
   and do not require DNS TXT, but can opt into the same blue DNS TXT check. Scans
   can only use targets and profiles in an approved, time-bounded scope.
 - **Auth/RBAC**: opaque session cookie, per-session CSRF token, ordered
-  `viewer < operator < admin` roles, login rate limiting, session revocation,
-  and an audit chain.
-- **Durable demo state**: SQLite persistence for scopes, scans, intel snapshots,
-  Guard counters, and readiness; backup/restore has been exercised.
-- **PostgreSQL path**: a disposable PostgreSQL smoke test exists; it is not yet
-  the live engine's production data path.
+  `viewer < operator < admin` roles, login rate limiting, database-backed
+  lockout, TOTP MFA, optional OIDC, password reset, session inventory and
+  revocation, and auth audit events. See `docs/AUTH-MATRIX.md`.
+- **Durable demo state**: SQLite remains the zero-dependency demo fallback.
+- **PostgreSQL live path**: the live engine selects PostgreSQL when
+  `DATABASE_URL` is set, uses pooled connections, and has versioned migrations
+  with apply/rollback tests. SQLite remains available for the local demo.
+- **Deployment path**: Caddy TLS/security headers, non-root BFF and engine
+  containers, healthchecks, resource limits, loopback-only engine URL, and a
+  documented Supabase/migration/backup runbook in `deploy/README.md`.
 - **Intel**: CISA KEV ingestion is exposed in the UI; NVD and EPSS remain
   API/schedule-only. The demo does not invent feed results.
-- **Quality evidence**: 218 root tests, 25 BFF tests, 6 frontend tests, frontend
-  type-check, and a production build passed at this baseline.
+- **Quality evidence**: 225 root tests (including disposable PostgreSQL
+  databases), 32 BFF tests, 6 frontend tests, frontend type-check, production
+  build, and both container builds passed at this baseline.
 - **New profile selection**: the Targets console lets the operator select Nmap,
   Subfinder, TLS, and synthetic inventory. Nmap and Subfinder each have their
   own Normal/Medium/High/Deep dropdown inside the profile card. It queues one
@@ -50,50 +58,42 @@ deployment, and evidence, not missing UI or missing core logic.
 
 ### P0 — required before a single-tenant production pilot
 
-1. **PostgreSQL as the live data path**
-   - Move scopes, scans, intel facts, findings, Guard events, readiness
-     snapshots, users, sessions, and audit records to PostgreSQL.
-   - Add versioned migrations, connection pooling, transaction boundaries, and
-     a migration/rollback test.
-   - Replace the current "smoke-tested path" claim with a live-engine run.
+1. **PostgreSQL as the live data path** — **implemented for the live engine**
+   - Scopes, scans, Intel facts/findings, Guard counters, readiness snapshots,
+     and scheduler state use dedicated `live_*` tables with pooled connections.
+   - Versioned migrations and an apply/rollback test exist.
+   - BFF auth tables are bootstrapped once with `flask init-schema`; BFF
+     operational tables still need a full versioned migration set before a
+     production pilot.
 
-2. **Production identity**
-   - SSO via OIDC or SAML; MFA; password reset/disable flows.
-   - Session/device inventory, forced revocation, and idle/absolute timeouts.
-   - Per-tenant role checks and an authorization matrix; remove the single local
-     bootstrap account as the only identity path.
-   - Secrets in a managed secret store, not local files or environment defaults.
+2. **Production identity** — **partially implemented**
+   - TOTP MFA, optional OIDC, password reset/disable, session inventory, forced
+     revocation, and a per-tenant authorization matrix exist.
+   - SAML, tenant-wide MFA enforcement, idle timeout, and a managed secret store
+     are still open.
 
-3. **Production deployment**
-   - Run Flask under a production WSGI server (for example Gunicorn) behind a
-     TLS-terminating reverse proxy.
-   - HSTS, secure cookies, strict CSP, request-size limits, edge rate limits,
-     and egress allowlists.
-   - Reproducible container images, health/readiness probes, resource limits,
-     non-root users, and a documented rollback.
+3. **Production deployment** — **partially implemented**
+   - Gunicorn behind Caddy, HSTS/secure cookies/CSP, request-size limits,
+     non-root images, healthchecks, resource limits, and a rollback runbook exist.
+   - Edge rate limiting, egress allowlist proof, and a real VPS/Supabase
+     deployment remain open.
 
-4. **Scanner safety and capacity**
-   - Keep the four bounded levels, then add queue concurrency limits, per-target
-     rate limits, cancellation, hard timeouts, output caps, and scanner
-     sandboxing.
-   - Package or pin Nmap/Subfinder and verify their versions at startup.
-   - Add explicit target allow/deny policy and a pre-approved-scope path for
-     scheduled or automatic runs.
+4. **Scanner safety and capacity** — **partially implemented**
+   - Four bounded levels, queue depth, per-target cooldown, concurrency limit,
+     retries, cancellation, hard timeouts, and output caps exist.
+   - Runtime scanner version verification, sandbox proof, and explicit
+     target allow/deny policy remain open.
    - Normal and Medium are bounded and require the BFF acknowledgement. High and
      Deep require DNS TXT ownership verification. No level enables exploitation,
      brute force, NSE scripts, or automatic remediation.
 
-5. **Backups and disaster recovery**
-   - Encrypted database and object backups, off-host copies, retention policy,
-     restore drills, RPO/RTO targets, and a documented recovery runbook.
-   - Current local backup files are not production-grade.
+5. **Backups and disaster recovery** — **open**
+   - Encrypted off-host backups, retention, restore drills, RPO/RTO targets, and
+     a recovery runbook are still required.
 
-6. **Observability and operations**
-   - Structured logs with request IDs, metrics, traces, dashboards, alerts, and
-     error tracking.
-   - SLOs for API availability, scan completion, feed freshness, and queue lag.
-   - On-call ownership, incident response, upgrade/rollback runbooks, and
-     capacity planning.
+6. **Observability and operations** — **open**
+   - Structured logs with request IDs exist; metrics, traces, dashboards, alerts,
+     error tracking, SLOs, and on-call ownership are still required.
 
 ### P1 — required before general production use
 
@@ -107,8 +107,8 @@ deployment, and evidence, not missing UI or missing core logic.
    - Evaluate the regex/heuristic detector against a labeled corpus.
    - Add response scanning/redaction, policy configuration, upstream model
      allowlisting, and false-positive/negative metrics.
-   - Keep the current inspect-only guarantee until the upstream gateway is
-     implemented and tested.
+   - Keep inspect-only as the default; the optional OpenAI-compatible upstream
+     gateway is behind explicit configuration and still needs evaluation.
 
 9. **Data protection and lifecycle**
    - Encryption at rest and in transit, key rotation, retention/deletion

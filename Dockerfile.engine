@@ -1,0 +1,50 @@
+# Production image for the loopback-only ZeroTrace live engine.
+#
+# The engine is never published to the host. Only the BFF can reach it over the
+# private Compose network. Nmap runs in TCP connect mode; the container drops
+# all Linux capabilities and does not need NET_RAW for the supported profiles.
+
+FROM python:3.13-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    ZEROTRACE_ENGINE_HOST=127.0.0.1 \
+    ZEROTRACE_ENGINE_PORT=8765 \
+    ZEROTRACE_LIVE_DB=/data/live-engine.sqlite3
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        nmap \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG SUBFINDER_VERSION=2.6.7
+ARG TARGETARCH=amd64
+RUN curl -fsSL \
+        "https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_${TARGETARCH}.zip" \
+        -o /tmp/subfinder.zip \
+    && unzip -q /tmp/subfinder.zip -d /usr/local/bin \
+    && chmod 0755 /usr/local/bin/subfinder \
+    && rm -f /tmp/subfinder.zip
+
+WORKDIR /app
+COPY pyproject.toml ./
+COPY app ./app
+COPY scripts ./scripts
+COPY migrations ./migrations
+RUN pip install --no-cache-dir --disable-pip-version-check .
+
+RUN groupadd --system zerotrace \
+    && useradd --system --gid zerotrace --no-create-home --home-dir /app zerotrace \
+    && mkdir -p /data \
+    && chown -R zerotrace:zerotrace /app /data
+
+USER zerotrace
+EXPOSE 8765
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=3)"
+
+CMD ["python", "-m", "scripts.live_engine"]

@@ -21,6 +21,7 @@ from uuid import uuid4
 from app.events import EventEnvelope
 from app.guard import (
     GuardConfig,
+    GuardError,
     create_guard_app,
 )
 from app.integration import IntegratedReadinessState

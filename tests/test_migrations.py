@@ -25,6 +25,8 @@ class MigrationTests(unittest.TestCase):
                 "0004_intel",
                 "0005_recon_inventory",
                 "0006_correlation",
+                "0007_live_runtime",
+                "0008_identity_hardening",
             ],
         )
         self.assertIn("processed_events", sql)
@@ -54,3 +56,31 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("intel_findings", sql)
         self.assertIn("formula_version", sql)
         self.assertIn("intel_uncertain_matches", sql)
+
+    def test_live_runtime_migration_defines_durable_engine_state(self) -> None:
+        sql = "\n".join(migration_statements())
+
+        for table in (
+            "live_scopes",
+            "live_scans",
+            "live_intel_facts",
+            "live_intel_meta",
+            "live_findings",
+            "live_uncertain_matches",
+            "live_guard_events",
+            "live_readiness_snapshots",
+            "live_intel_schedule",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("live_scans_state_check", sql)
+        self.assertIn("live_intel_schedule_source_check", sql)
+
+    def test_identity_migration_adds_mfa_and_session_metadata(self) -> None:
+        sql = "\n".join(migration_statements())
+
+        self.assertIn("password_reset_tokens", sql)
+        self.assertIn("oidc_identities", sql)
+        self.assertIn("auth_audit_events", sql)
+        self.assertIn("mfa_enabled", sql)
+        self.assertIn("mfa_verified", sql)
+        self.assertIn("auth_method", sql)

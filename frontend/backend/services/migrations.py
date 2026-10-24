@@ -3,8 +3,57 @@
 from __future__ import annotations
 
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 
 from ..extensions import db
+
+IDENTITY_COLUMNS = {
+    "user_accounts": (
+        ("password_changed_at", "DATETIME"),
+        ("failed_login_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("locked_until", "DATETIME"),
+        ("mfa_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("mfa_secret", "VARCHAR(512)"),
+        ("mfa_pending_secret", "VARCHAR(512)"),
+    ),
+    "auth_sessions": (
+        ("auth_method", "VARCHAR(32) NOT NULL DEFAULT 'password'"),
+        ("mfa_verified", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("ip_address", "VARCHAR(64)"),
+        ("user_agent", "VARCHAR(512)"),
+    ),
+}
+
+
+def migrate_identity_columns() -> bool:
+    """Add identity-hardening columns to an existing local SQLite database."""
+
+    if db.engine.dialect.name != "sqlite":
+        return False
+    inspector = inspect(db.engine)
+    tables = set(inspector.get_table_names())
+    changed = False
+    for table, columns in IDENTITY_COLUMNS.items():
+        if table not in tables:
+            continue
+        existing = {column["name"] for column in inspector.get_columns(table)}
+        for name, definition in columns:
+            if name in existing:
+                continue
+            try:
+                db.session.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+                )
+            except OperationalError as error:
+                db.session.rollback()
+                if "duplicate column" not in str(error).lower():
+                    raise
+                continue
+            changed = True
+    if changed:
+        db.session.commit()
+    return changed
+
 
 LEGACY_EVENT_COLUMNS = (
     "id",

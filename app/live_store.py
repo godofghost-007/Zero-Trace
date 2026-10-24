@@ -14,13 +14,19 @@ JSON or stored as a bound parameter.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import asdict
 import json
 from pathlib import Path
 import sqlite3
 from threading import RLock
 from typing import Any, Iterable
 
-from .intel import VulnerabilityFact
+from .intel import (
+    PriorityResult,
+    ServiceFinding,
+    UncertainMatch,
+    VulnerabilityFact,
+)
 from .intel_api import Ingestion
 from .intel_feeds import EpssRecord, KevRecord
 from .recon import NormalizedService, Scope
@@ -114,6 +120,60 @@ def service_from_dict(value: dict[str, object]) -> NormalizedService:
     )
 
 
+def finding_to_dict(finding: ServiceFinding) -> dict[str, object]:
+    payload = asdict(finding)
+    payload["evidence"] = list(finding.evidence)
+    payload["priority"] = {
+        **asdict(finding.priority),
+        "inputs": dict(finding.priority.inputs),
+        "missing": list(finding.priority.missing),
+    }
+    return payload
+
+
+def finding_from_dict(value: dict[str, object]) -> ServiceFinding:
+    priority = value["priority"]
+    if not isinstance(priority, dict):
+        raise ValueError("finding priority payload is invalid")
+    return ServiceFinding(
+        service_id=str(value["service_id"]),
+        asset_id=str(value["asset_id"]),
+        cve_id=str(value["cve_id"]),
+        match_method=str(value["match_method"]),
+        confidence=float(value["confidence"]),  # type: ignore[arg-type]
+        evidence=tuple(str(item) for item in value.get("evidence", [])),
+        freshness=str(value["freshness"]),
+        priority=PriorityResult(
+            formula_version=str(priority["formula_version"]),
+            score=float(priority["score"]),  # type: ignore[arg-type]
+            inputs={
+                str(key): float(item)
+                for key, item in dict(priority.get("inputs", {})).items()
+            },
+            missing=tuple(str(item) for item in priority.get("missing", [])),
+            confidence=float(priority["confidence"]),  # type: ignore[arg-type]
+        ),
+    )
+
+
+def uncertain_to_dict(match: UncertainMatch) -> dict[str, object]:
+    payload = asdict(match)
+    payload["evidence"] = list(match.evidence)
+    return payload
+
+
+def uncertain_from_dict(value: dict[str, object]) -> UncertainMatch:
+    return UncertainMatch(
+        service_id=str(value["service_id"]),
+        asset_id=str(value["asset_id"]),
+        cve_id=str(value["cve_id"]),
+        reason=str(value["reason"]),
+        evidence=tuple(str(item) for item in value.get("evidence", [])),
+        freshness=str(value["freshness"]),
+        source_revision=str(value["source_revision"]),
+    )
+
+
 class LiveStore:
     """SQLite-backed durable state for the local live engine."""
 
@@ -183,6 +243,16 @@ class LiveStore:
 
                 CREATE TABLE IF NOT EXISTS live_intel_meta (
                     key TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS live_findings (
+                    finding_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS live_uncertain_matches (
+                    match_id TEXT PRIMARY KEY,
                     payload TEXT NOT NULL
                 );
 
@@ -341,9 +411,25 @@ class LiveStore:
         kev_records: Iterable[KevRecord],
         ingestions: dict[str, Ingestion],
         idempotency: dict[str, tuple[str, str]],
+        findings: Iterable[ServiceFinding] = (),
+        uncertain_matches: Iterable[UncertainMatch] = (),
     ) -> None:
         fact_rows = [
             (fact.cve_id, _json(fact_to_dict(fact))) for fact in facts
+        ]
+        finding_rows = [
+            (
+                f"{finding.service_id}:{finding.cve_id}",
+                _json(finding_to_dict(finding)),
+            )
+            for finding in findings
+        ]
+        uncertain_rows = [
+            (
+                f"{match.service_id}:{match.cve_id}",
+                _json(uncertain_to_dict(match)),
+            )
+            for match in uncertain_matches
         ]
         epss_rows = [
             {
@@ -378,6 +464,17 @@ class LiveStore:
                 "INSERT INTO live_intel_facts (cve_id, payload) VALUES (?, ?)",
                 fact_rows,
             )
+            connection.execute("DELETE FROM live_findings")
+            connection.executemany(
+                "INSERT INTO live_findings (finding_id, payload) VALUES (?, ?)",
+                finding_rows,
+            )
+            connection.execute("DELETE FROM live_uncertain_matches")
+            connection.executemany(
+                "INSERT INTO live_uncertain_matches (match_id, payload) "
+                "VALUES (?, ?)",
+                uncertain_rows,
+            )
             for key, payload in (
                 ("epss", epss_rows),
                 ("kev", kev_rows),
@@ -400,9 +497,22 @@ class LiveStore:
             meta_rows = connection.execute(
                 "SELECT key, payload FROM live_intel_meta"
             ).fetchall()
+            finding_rows = connection.execute(
+                "SELECT payload FROM live_findings ORDER BY finding_id"
+            ).fetchall()
+            uncertain_rows = connection.execute(
+                "SELECT payload FROM live_uncertain_matches ORDER BY match_id"
+            ).fetchall()
         meta = {str(row["key"]): json.loads(row["payload"]) for row in meta_rows}
         facts = tuple(
             fact_from_dict(json.loads(row["payload"])) for row in fact_rows
+        )
+        findings = tuple(
+            finding_from_dict(json.loads(row["payload"])) for row in finding_rows
+        )
+        uncertain_matches = tuple(
+            uncertain_from_dict(json.loads(row["payload"]))
+            for row in uncertain_rows
         )
         epss = tuple(
             EpssRecord(
@@ -443,6 +553,8 @@ class LiveStore:
             "kev": kev,
             "ingestions": ingestions,
             "idempotency": idempotency,
+            "findings": findings,
+            "uncertain_matches": uncertain_matches,
         }
 
     # -- scheduled intel ------------------------------------------------

@@ -30,6 +30,7 @@ import os
 from pathlib import Path
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 
@@ -59,6 +60,7 @@ from app.intel_feeds import (  # noqa: E402
 )
 from app.intel_scheduler import IntelScheduler  # noqa: E402
 from app.live_store import LiveStore  # noqa: E402
+from app.live_store_pg import PostgresLiveStore  # noqa: E402
 from app.recon import (  # noqa: E402
     AdapterResult,
     InMemoryReconRepository,
@@ -112,6 +114,21 @@ def _database_path() -> Path:
         if configured
         else ROOT / "data" / "live-engine.sqlite3"
     )
+
+
+def create_live_store(
+    settings: "EngineSettings | None" = None,
+) -> LiveStore | PostgresLiveStore:
+    """Select PostgreSQL when configured, otherwise keep the SQLite demo path."""
+
+    settings = settings or EngineSettings.from_env()
+    if settings.database_url:
+        return PostgresLiveStore.from_url(
+            settings.database_url,
+            min_size=settings.postgres_pool_min_size,
+            max_size=settings.postgres_pool_max_size,
+        )
+    return LiveStore(_database_path())
 
 
 def _is_exposed(service: NormalizedService) -> bool:
@@ -265,9 +282,16 @@ class EngineSettings:
     port: int = 8765
     api_key: str = DEFAULT_API_KEY
     auth_secret: bytes = b""
+    database_url: str = ""
+    postgres_pool_min_size: int = 1
+    postgres_pool_max_size: int = 5
     tls_port: int = 443
     tls_verify: bool = True
     nmap_ports: str | None = None
+    scan_max_queue_depth: int = 50
+    scan_target_cooldown_seconds: float = 2.0
+    scan_max_concurrent_runs: int = 1
+    scan_max_retries: int = 0
     intel_schedule_enabled: bool = True
     intel_initial_delay_seconds: int = 300
     nvd_interval_seconds: int = 6 * 60 * 60
@@ -287,6 +311,23 @@ class EngineSettings:
             raise ValueError("engine TLS port is invalid")
         if not 1 <= self.intel_initial_delay_seconds <= 3600:
             raise ValueError("intel initial delay is outside the allowed range")
+        if self.database_url and not self.database_url.startswith(
+            ("postgres://", "postgresql://", "postgresql+psycopg://")
+        ):
+            raise ValueError("engine database URL must be PostgreSQL")
+        if (
+            self.postgres_pool_min_size < 1
+            or self.postgres_pool_max_size < self.postgres_pool_min_size
+        ):
+            raise ValueError("engine PostgreSQL pool sizes are invalid")
+        if self.scan_max_queue_depth < 1:
+            raise ValueError("scan queue depth must be positive")
+        if self.scan_target_cooldown_seconds < 0:
+            raise ValueError("scan target cooldown must be non-negative")
+        if self.scan_max_concurrent_runs < 1:
+            raise ValueError("scan concurrency must be positive")
+        if self.scan_max_retries < 0:
+            raise ValueError("scan retries must be non-negative")
 
     @classmethod
     def from_env(cls) -> "EngineSettings":
@@ -303,17 +344,39 @@ class EngineSettings:
             nvd_interval = int(os.environ.get("ZEROTRACE_NVD_INTERVAL", str(6 * 60 * 60)))
             epss_interval = int(os.environ.get("ZEROTRACE_EPSS_INTERVAL", str(12 * 60 * 60)))
             kev_interval = int(os.environ.get("ZEROTRACE_KEV_INTERVAL", str(24 * 60 * 60)))
+            pool_min = int(os.environ.get("ZEROTRACE_POSTGRES_POOL_MIN", "1"))
+            pool_max = int(os.environ.get("ZEROTRACE_POSTGRES_POOL_MAX", "5"))
+            queue_depth = int(os.environ.get("ZEROTRACE_SCAN_QUEUE_DEPTH", "50"))
+            target_cooldown = float(
+                os.environ.get("ZEROTRACE_SCAN_TARGET_COOLDOWN_SECONDS", "2")
+            )
+            scan_concurrency = int(
+                os.environ.get("ZEROTRACE_SCAN_MAX_CONCURRENT", "1")
+            )
+            scan_retries = int(os.environ.get("ZEROTRACE_SCAN_MAX_RETRIES", "0"))
         except ValueError as error:
             raise ValueError("engine numeric settings must be integers") from error
+        database_url = os.environ.get("DATABASE_URL", "").strip()
+        if database_url.startswith("postgresql+psycopg://"):
+            database_url = database_url.replace(
+                "postgresql+psycopg://", "postgresql://", 1
+            )
         return cls(
             host=os.environ.get("ZEROTRACE_ENGINE_HOST", "127.0.0.1"),
             port=port,
             api_key=api_key,
             auth_secret=secret,
+            database_url=database_url,
+            postgres_pool_min_size=pool_min,
+            postgres_pool_max_size=pool_max,
             tls_port=tls_port,
             tls_verify=os.environ.get("ZEROTRACE_TLS_VERIFY", "true").lower()
             == "true",
             nmap_ports=os.environ.get("ZEROTRACE_NMAP_PORTS", "").strip() or None,
+            scan_max_queue_depth=queue_depth,
+            scan_target_cooldown_seconds=target_cooldown,
+            scan_max_concurrent_runs=scan_concurrency,
+            scan_max_retries=scan_retries,
             intel_schedule_enabled=os.environ.get(
                 "ZEROTRACE_INTEL_SCHEDULE_ENABLED", "true"
             ).lower() == "true",
@@ -358,6 +421,37 @@ def _configured_adapters(settings: EngineSettings | None = None) -> dict[str, ob
     return adapters
 
 
+def _tool_version(executable: str | None) -> str | None:
+    if not executable:
+        return None
+    try:
+        completed = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    output = (completed.stdout or completed.stderr or "").strip()
+    if not output:
+        return None
+    return output.splitlines()[0][:200]
+
+
+def _scanner_inventory() -> dict[str, dict[str, object]]:
+    inventory: dict[str, dict[str, object]] = {}
+    for name in ("nmap", "subfinder"):
+        executable = shutil.which(name)
+        inventory[name] = {
+            "available": bool(executable),
+            "path": executable,
+            "version": _tool_version(executable),
+        }
+    return inventory
+
+
 def _dns_resolver(host: str) -> tuple[str, ...]:
     return tuple(socket.gethostbyname_ex(host)[2])
 
@@ -370,8 +464,15 @@ def create_live_engine(
 ) -> FastAPI:
     repository = InMemoryReconRepository()
     adapters = _configured_adapters(settings)
-    engine = ReconEngine(repository, adapters, dns_resolver=_dns_resolver)
-    store = store or LiveStore(_database_path())
+    scanner_inventory = _scanner_inventory()
+    engine = ReconEngine(
+        repository,
+        adapters,
+        dns_resolver=_dns_resolver,
+        max_concurrent_runs=settings.scan_max_concurrent_runs,
+        max_retries=settings.scan_max_retries,
+    )
+    store = store or create_live_store(settings)
 
     intel_repository = InMemoryIntelRepository()
     transport = feed_transport or RetryingFeedTransport(UrllibFeedTransport())
@@ -383,6 +484,8 @@ def create_live_engine(
             kev_records=intel_repository.kev_records,
             ingestions=intel_repository.ingestions,
             idempotency=intel_repository.idempotency,
+            findings=intel_repository.findings.values(),
+            uncertain_matches=intel_repository.uncertain_matches,
         )
 
     intel_repository.on_change = persist_intel
@@ -393,6 +496,8 @@ def create_live_engine(
         kev_records=persisted["kev"],  # type: ignore[arg-type]
         ingestions=persisted["ingestions"],  # type: ignore[arg-type]
         idempotency=persisted["idempotency"],  # type: ignore[arg-type]
+        findings=persisted.get("findings", ()),  # type: ignore[arg-type]
+        uncertain_matches=persisted.get("uncertain_matches", ()),  # type: ignore[arg-type]
     )
     intel_scheduler = IntelScheduler(
         intel_repository,
@@ -420,6 +525,8 @@ def create_live_engine(
         ),
         persistence=store,
         on_scan_complete=scan_completed,
+        max_queue_depth=settings.scan_max_queue_depth,
+        target_cooldown_seconds=settings.scan_target_cooldown_seconds,
     )
     _sync_scan_services(queue, intel_repository)
     persist_intel()
@@ -459,6 +566,9 @@ def create_live_engine(
             intel_scheduler.stop()
             stop_worker.set()
             thread.join(timeout=5)
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
 
     app = FastAPI(title="ZeroTrace live engine", lifespan=lifespan)
 
@@ -524,6 +634,12 @@ def create_live_engine(
                 "intel": "ok",
                 "guard": "ok",
                 "storage": "ok" if storage_ok else "degraded",
+                "scanners": {
+                    name: (
+                        "available" if details["available"] else "unavailable"
+                    )
+                    for name, details in scanner_inventory.items()
+                },
                 "worker": "stopped" if stop_worker.is_set() else "running",
                 "intelScheduler": (
                     "disabled"
@@ -561,10 +677,17 @@ def create_live_engine(
             "service": "zerotrace-live-engine",
             "mode": "live",
             "time": datetime.now(timezone.utc).isoformat(),
-            "storage": "sqlite",
+            "storage": getattr(store, "backend", "sqlite"),
+            "scanLimits": {
+                "queueDepth": settings.scan_max_queue_depth,
+                "targetCooldownSeconds": settings.scan_target_cooldown_seconds,
+                "maxConcurrentRuns": settings.scan_max_concurrent_runs,
+                "maxRetries": settings.scan_max_retries,
+            },
             "adapters": sorted(
                 {profile.adapter_name for profile in available_profiles.values()}
             ),
+            "scanners": scanner_inventory,
             "profiles": sorted(available_profiles),
             "scopes": len(scopes),
             "scans": len(jobs),

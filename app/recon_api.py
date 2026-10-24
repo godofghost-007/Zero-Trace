@@ -3,6 +3,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 import logging
 import threading
+import time
 from typing import Protocol
 
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -108,7 +109,13 @@ class ReconQueue:
         authorization_registry: AuthorizationRegistry | None = None,
         persistence: QueuePersistence | None = None,
         on_scan_complete: Callable[[_QueuedScan], None] | None = None,
+        max_queue_depth: int = 50,
+        target_cooldown_seconds: float = 0,
     ) -> None:
+        if max_queue_depth < 1:
+            raise ReconError("queue depth must be positive")
+        if target_cooldown_seconds < 0:
+            raise ReconError("target cooldown must be non-negative")
         self.engine = engine
         self.repository = repository
         self._scopes: dict[str, Scope] = {}
@@ -116,6 +123,9 @@ class ReconQueue:
         self.authorization_registry = authorization_registry
         self.persistence = persistence
         self.on_scan_complete = on_scan_complete
+        self.max_queue_depth = max_queue_depth
+        self.target_cooldown_seconds = target_cooldown_seconds
+        self._last_enqueue: dict[str, float] = {}
         self._jobs: dict[str, _QueuedScan] = {}
         self._idempotency: dict[str, tuple[str, str]] = {}
         self._lock = threading.Lock()
@@ -146,6 +156,18 @@ class ReconQueue:
                             "idempotency key was reused with a different request"
                         )
                     return self._jobs[existing[1]]
+            active = sum(
+                1
+                for queued in self._jobs.values()
+                if queued.state in {ReconRunState.QUEUED, ReconRunState.RUNNING}
+            )
+            if active >= self.max_queue_depth:
+                raise ReconError("recon queue is full")
+            if self.target_cooldown_seconds > 0:
+                last = self._last_enqueue.get(target.value)
+                now = time.monotonic()
+                if last is not None and now - last < self.target_cooldown_seconds:
+                    raise ReconError("target is cooling down")
             job = _QueuedScan(
                 scan_id=self._new_scan_id(),
                 scope=scope,
@@ -154,6 +176,7 @@ class ReconQueue:
                 idempotency_key=idempotency_key,
             )
             self._jobs[job.scan_id] = job
+            self._last_enqueue[target.value] = time.monotonic()
             if idempotency_key is not None:
                 self._idempotency[idempotency_key] = (
                     request_fingerprint,

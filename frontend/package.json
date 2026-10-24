@@ -2,7 +2,7 @@
   "name": "zerotracedemo",
   "version": "1.0.0",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port ${PORT:-3000} --strictPort",
     "build": "vite build",

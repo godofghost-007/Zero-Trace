@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS live_intel_schedule;
+DROP TABLE IF EXISTS live_readiness_snapshots;
+DROP TABLE IF EXISTS live_guard_events;
+DROP TABLE IF EXISTS live_uncertain_matches;
+DROP TABLE IF EXISTS live_findings;
+DROP TABLE IF EXISTS live_intel_meta;
+DROP TABLE IF EXISTS live_intel_facts;
+DROP TABLE IF EXISTS live_scans;
+DROP TABLE IF EXISTS live_scopes;

@@ -1,11 +1,75 @@
+import time
 from pathlib import Path
 from uuid import uuid4
 
+from cryptography.fernet import Fernet
 from flask import Flask, g, jsonify, request, send_from_directory
+from sqlalchemy.exc import OperationalError
 from werkzeug.exceptions import HTTPException
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .config import Config
 from .extensions import db
+
+
+def validate_runtime_config(app: Flask) -> None:
+    """Fail fast when a production configuration is unsafe."""
+
+    if app.config.get("ENVIRONMENT") not in {"production", "prod"}:
+        return
+    problems: list[str] = []
+    secret = str(app.config.get("SECRET_KEY", ""))
+    if len(secret) < 32 or secret == "local-demo-only-not-for-production":
+        problems.append("FLASK_SECRET_KEY must be a unique value of at least 32 characters")
+    database = str(app.config.get("SQLALCHEMY_DATABASE_URI", ""))
+    if not database.startswith(("postgresql://", "postgresql+psycopg://")):
+        problems.append("DATABASE_URL must point to PostgreSQL in production")
+    if app.config.get("AUTO_CREATE_SCHEMA", True):
+        problems.append("AUTO_CREATE_SCHEMA must be false in production")
+    if app.config.get("DEMO_MODE", True):
+        problems.append("DEMO_MODE must be false in production")
+    if not app.config.get("AUTH_REQUIRED", True):
+        problems.append("AUTH_REQUIRED must be true in production")
+    if not app.config.get("AUTH_COOKIE_SECURE", False):
+        problems.append("ZEROTRACE_COOKIE_SECURE must be true in production")
+    key = str(app.config.get("AUTH_MFA_ENCRYPTION_KEY", "")).strip()
+    if not key:
+        problems.append("ZEROTRACE_MFA_ENCRYPTION_KEY is required in production")
+    else:
+        try:
+            Fernet(key.encode("ascii"))
+        except (ValueError, TypeError):
+            problems.append("ZEROTRACE_MFA_ENCRYPTION_KEY is not a valid Fernet key")
+    if app.config.get("AUTH_OIDC_ENABLED"):
+        for name in (
+            "AUTH_OIDC_ISSUER",
+            "AUTH_OIDC_CLIENT_ID",
+            "AUTH_OIDC_CLIENT_SECRET",
+        ):
+            if not str(app.config.get(name, "")).strip():
+                problems.append(f"{name} is required when OIDC is enabled")
+    if problems:
+        raise RuntimeError(
+            "Unsafe production configuration: " + "; ".join(problems)
+        )
+
+
+def _create_schema_safely() -> None:
+    """Create tables even when multiple Gunicorn workers boot together."""
+
+    last_error: Exception | None = None
+    for attempt in range(5):
+        try:
+            db.create_all()
+            return
+        except OperationalError as error:
+            db.session.rollback()
+            last_error = error
+            if "already exists" not in str(error).lower() or attempt == 4:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+    assert last_error is not None
+    raise last_error
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -13,19 +77,25 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.config.from_object(Config)
     if test_config:
         app.config.update(test_config)
+    validate_runtime_config(app)
+    if app.config.get("TRUST_PROXY"):
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1
+        )
 
     Path(app.config["DATA_DIR"]).mkdir(parents=True, exist_ok=True)
     Path(app.config["AUDIT_DB_PATH"]).parent.mkdir(parents=True, exist_ok=True)
     db.init_app(app)
 
     from .api import api
-    from .auth import auth, bootstrap_admin, install_auth_guards
+    from .auth import auth, bootstrap_admin, configure_oidc, install_auth_guards
     from .cli import register_cli
     from .engine_api import engine_api
 
     app.register_blueprint(auth, url_prefix="/api/v1")
     app.register_blueprint(api, url_prefix="/api/v1")
     app.register_blueprint(engine_api, url_prefix="/api/v1")
+    configure_oidc(app)
     register_cli(app)
 
     @app.before_request
@@ -82,10 +152,14 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     if app.config.get("AUTO_CREATE_SCHEMA", True):
         with app.app_context():
-            db.create_all()
-            from .services.migrations import migrate_legacy_event_outbox
+            _create_schema_safely()
+            from .services.migrations import (
+                migrate_identity_columns,
+                migrate_legacy_event_outbox,
+            )
             from .services.scenario import initialize_demo_state
 
+            migrate_identity_columns()
             migrate_legacy_event_outbox()
 
             initialize_demo_state()

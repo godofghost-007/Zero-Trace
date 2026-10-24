@@ -703,3 +703,102 @@ Acceptance criteria:
 6. Remaining exceptions are recorded honestly.
 
 Evidence: [phase-16.md](evidence/phase-16.md).
+
+## Phase 17 — Production Hardening
+
+Entry gate: Phase 16 evidence recorded. Implementation authorized 2026-10-25.
+This phase closes the P0/P1 gaps in `docs/PRODUCTION-READINESS.md` and is
+divided into six work packages. Each work package must leave the demo path
+working; SQLite remains the local fallback until the PostgreSQL path is
+verified.
+
+### Phase 17A — Production data path and identity
+
+Acceptance criteria:
+
+1. The live engine can use PostgreSQL for scopes, scans, Intel facts and
+   metadata, Guard events, readiness snapshots, and Intel schedule state while
+   preserving the SQLite demo fallback.
+2. PostgreSQL schema changes are versioned, reversible, and covered by
+   migration tests. Connection pooling and transaction boundaries are explicit.
+3. A new operator can authenticate through OIDC or SAML, complete MFA, reset or
+   disable an account, and have sessions listed and revoked.
+4. Authorization is expressed as a documented role/action matrix. Secrets are
+   loaded from a managed secret source, never from committed defaults.
+5. Evidence records the live-engine PostgreSQL run, migration/rollback run, and
+   identity flow.
+
+Work packages:
+
+- `17A.1` PostgreSQL live-store contract and migration.
+- `17A.2` Live-engine PostgreSQL switch, pooling, and migration/rollback proof.
+- `17A.3` OIDC/SAML, MFA, password reset/disable, session inventory, matrix,
+  and secret loading.
+
+### Phase 17B — Production deployment and network
+
+Acceptance criteria:
+
+1. Flask runs under a production WSGI server behind a TLS-terminating reverse
+   proxy with HSTS, secure cookies, strict CSP, request-size limits, and edge
+   rate limits.
+2. The engine remains loopback-only and the browser never receives the engine
+   key. Egress allowlists are documented and enforceable.
+3. Reproducible container images, health/readiness probes, resource limits, and
+   non-root users are defined. A rollback procedure is documented and tested.
+
+### Phase 17C — Scanner safety and capacity
+
+Acceptance criteria:
+
+1. Scan queue concurrency, per-target rates, cancellation, hard timeouts, and
+   output caps are bounded by configuration.
+2. Nmap/Subfinder versions are pinned and checked at startup; missing or
+   unexpected versions report degraded, not success.
+3. Target allow/deny policy and a pre-approved scheduled-scope path are enforced
+   server-side. High/Deep still require DNS TXT authorization.
+4. No exploitation, brute force, NSE scripts, or automatic remediation is added.
+
+### Phase 17D — Backup, disaster recovery, and observability
+
+Acceptance criteria:
+
+1. Database and object backups are encrypted, copied off-host, retained by
+   policy, and restored in a clean environment within the documented RTO.
+2. Structured logs carry request IDs; RED/USE metrics, traces, dashboards, and
+   symptom-based alerts cover API availability, scan completion, feed freshness,
+   and queue lag.
+3. SLOs, on-call ownership, incident response, and recovery runbooks are written
+   and linked from alerts.
+
+### Phase 17E — Intel, Guard, and data protection
+
+Acceptance criteria:
+
+1. NVD pagination, retries/backoff, deduplication, provenance, rate-limit
+   handling, and CVE-to-service matching quality are exercised.
+2. EPSS/KEV freshness is visible and stale feeds are reported as degraded.
+3. Guard detector evaluation, response scanning/redaction, policy configuration,
+   upstream allowlisting, and false-positive/negative metrics are implemented
+   behind the documented inspect-only guarantee until the upstream gateway is
+   approved and tested.
+4. Encryption at rest/in transit, key rotation, retention/deletion, PII handling,
+   data residency, privacy review, and DPA requirements are documented and
+   enforced where applicable.
+
+### Phase 17F — Testing and release engineering
+
+Acceptance criteria:
+
+1. E2E browser tests cover login, scope creation, multi-profile scans, KEV sync,
+   Guard inspection, and failure states.
+2. Migration, load/performance, security, dependency, container, and restore
+   tests run in CI. SBOM and signed artifacts are produced.
+3. Branch protection, changelog, semantic versioning, staged rollout, rollback,
+   and environment configuration validation are in place.
+
+### Phase 18 — Release readiness
+
+Entry gate: Phase 17 work packages complete and evidenced. Final signoff follows
+the definition of done in `docs/PRODUCTION-READINESS.md` §5. No production claim
+is made until the human signoff is recorded.

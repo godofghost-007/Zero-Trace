@@ -5,17 +5,19 @@ ZeroTrace is a local-first cyber-defense demo with three cooperating modules:
 - **Trace Recon** — bounded attack-surface inventory and TLS metadata reads.
 - **Trace Intel** — normalized vulnerability facts, CISA KEV/EPSS signals,
   service correlation, and explainable prioritization.
-- **Trace Guard** — prompt-injection and PII inspection for LLM traffic, with
-  no upstream model call.
+- **Trace Guard** - prompt-injection and PII inspection for LLM traffic. The
+  default is inspect-only; an explicitly configured OpenAI-compatible upstream
+  gateway is available behind the Guard trust boundary.
 
 The operator-facing dashboard is a React single-page application served by a
 Flask backend-for-frontend (BFF). The BFF talks to the real Python modules
 directly for the fixture pages and, optionally, to a loopback-only FastAPI
 live engine for the Targets & Scope console.
 
-> **Status:** local demo and evaluation build. This is not a production
-> scanner, vulnerability service, LLM proxy, or multi-tenant console. See
-> [Safety boundaries](#safety-boundaries) and
+> **Status:** local demo plus the self-hosted production-hardening branch. It is
+> not yet a production-ready release until the Phase 18 gate and human signoff
+> are complete. See [Safety boundaries](#safety-boundaries),
+> [docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md), and
 > [docs/decisions](docs/decisions) for the limits recorded with the build.
 
 ## What works
@@ -25,10 +27,10 @@ live engine for the Targets & Scope console.
 | Dashboard | React/Vite pages for Architecture, Database & Events, Recon, Intel, Guard, Targets & Scope, and Engine Settings |
 | Recon | Allowlisted synthetic, TLS-metadata, Nmap, Subfinder, and read-only S3 adapters; approved scopes; rate limits; retries; normalized inventory |
 | Intel | NVD/EPSS/CISA KEV parsing, service correlation, confidence/freshness, priority formula, persisted facts |
-| Guard | Prompt-injection and PII inspection, audit metadata, bounded request handling; inspect-only by design |
+| Guard | Prompt-injection and PII inspection, audit metadata, bounded request handling; inspect-only by default, optional allowlisted upstream |
 | Readiness | AEI/VUI/AIET components, explicit unknown inputs, persisted snapshots |
 | Live console | Server-side engine key, loopback-only engine URL, explicit operator authorization, durable demo state |
-| Auth | Local login, opaque DB-backed sessions, per-session CSRF, ordered viewer/operator/admin roles, CLI account management |
+| Auth | Local login, opaque DB-backed sessions, per-session CSRF, TOTP MFA, optional OIDC, password reset, session inventory, ordered viewer/operator/admin roles, CLI account management |
 | Intel schedule | Background NVD/EPSS/KEV runs through the same bounded ingestion path, persisted last-run status, KEV exposed in the UI |
 | Recovery | SHA-256-manifested SQLite and PostgreSQL backup, verification, and restore with pre-restore copies |
 | Persistence | PostgreSQL migrations for the production path; SQLite for the self-contained live-engine demo |
@@ -272,9 +274,9 @@ compose.lab.yaml         Loopback-only isolated lab containers
 
 ## Known limitations
 
-- Local account authentication is implemented, but there is no enterprise
-  identity provider, SSO, SCIM, or MFA. Tenant IDs are not row-level data
-  isolation.
+- Local account authentication includes TOTP MFA and optional OIDC. There is no
+  SAML, SCIM, hosted billing, or public signup in v1. Tenant IDs are not
+  row-level data isolation.
 - Fixture-backed views are intentionally synthetic.
 - NVD and EPSS are scheduled but API-only in the UI; the full live NVD sync was
   not run end to end.
@@ -285,6 +287,20 @@ compose.lab.yaml         Loopback-only isolated lab containers
   persistence path. The host-port PostgreSQL path was intermittent during
   Docker Desktop checkpoints; the recorded smoke test uses the Compose network.
 - Backups are local and unencrypted; there is no offsite copy or retention
-  policy.
+  policy. Production must add encrypted offsite backup and restore rehearsal.
 - Performance and remediation are measured/proposed, not automatically
   executed in production. The full 9 GB model profile is unproven.
+- The Guard upstream gateway and OIDC callback are implemented but have not been
+  exercised against every provider. NVIDIA's free API is best-effort capacity,
+  not a production SLA.
+- The self-hosted release gate (Phase 18) and human signoff are still required
+  before calling this production-ready.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Self-hosted deployment
+
+See [deploy/README.md](deploy/README.md) for the Caddy, BFF, engine, Supabase,
+migration, backup, and rollback runbook.

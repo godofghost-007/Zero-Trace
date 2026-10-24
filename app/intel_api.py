@@ -7,7 +7,13 @@ from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .intel import ServiceDescriptor, VulnerabilityFact, match_service
+from .intel import (
+    ServiceDescriptor,
+    ServiceFinding,
+    UncertainMatch,
+    VulnerabilityFact,
+    match_service,
+)
 from .intel_feeds import (
     CISA_KEV_ENDPOINT,
     EPSS_ENDPOINT,
@@ -72,6 +78,8 @@ class InMemoryIntelRepository:
         kev_records: tuple[object, ...] = (),
         ingestions: dict[str, Ingestion] | None = None,
         idempotency: dict[str, tuple[str, str]] | None = None,
+        findings: tuple[ServiceFinding, ...] = (),
+        uncertain_matches: tuple[UncertainMatch, ...] = (),
     ) -> None:
         """Restore a previously persisted feed snapshot."""
 
@@ -80,6 +88,11 @@ class InMemoryIntelRepository:
         self.kev_records = tuple(kev_records)
         self.ingestions = dict(ingestions or {})
         self.idempotency = dict(idempotency or {})
+        self.findings = {
+            f"{finding.service_id}:{finding.cve_id}": finding
+            for finding in findings
+        }
+        self.uncertain_matches = list(uncertain_matches)
 
     def replace_findings(
         self,

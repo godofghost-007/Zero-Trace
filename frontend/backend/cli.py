@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import secrets
+from datetime import UTC, datetime
+from pathlib import Path
 
 import click
 from flask import Flask, current_app
@@ -27,7 +27,7 @@ from .services.backup import (
 
 
 def _default_backup_path() -> Path:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return Path(current_app.config["DATA_DIR"]).parent / "backups" / f"zerotrace-{stamp}"
 
 
@@ -40,6 +40,19 @@ def _database_parts() -> tuple[str, Path | None, str | None, str | None]:
 
 
 def register_cli(app: Flask) -> None:
+    @app.cli.command("init-schema")
+    def init_schema_command() -> None:
+        """Create BFF tables once, then keep AUTO_CREATE_SCHEMA=false."""
+        db.create_all()
+        from .services.migrations import (
+            migrate_identity_columns,
+            migrate_legacy_event_outbox,
+        )
+
+        migrate_identity_columns()
+        migrate_legacy_event_outbox()
+        click.echo("BFF schema initialized")
+
     @app.cli.command("create-user")
     @click.option("--email", prompt=True)
     @click.option("--password", prompt=True, hide_input=True, confirmation_prompt=True)
@@ -117,7 +130,7 @@ def register_cli(app: Flask) -> None:
             raise click.ClickException(str(error)) from error
         user.password_hash = generate_password_hash(normalized)
         sessions = AuthSession.query.filter_by(user_id=user.id, revoked_at=None).all()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for session in sessions:
             session.revoked_at = now
         db.session.commit()
@@ -139,7 +152,7 @@ def register_cli(app: Flask) -> None:
         if user is None:
             raise click.ClickException("user was not found")
         sessions = AuthSession.query.filter_by(user_id=user.id, revoked_at=None).all()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for session in sessions:
             session.revoked_at = now
         user.active = False

@@ -11,7 +11,10 @@ elif DATABASE_URL.startswith("postgresql://") and "+" not in DATABASE_URL.split(
 
 
 class Config:
-    SECRET_KEY = os.environ.get("FLASK_SECRET_KEY", "local-demo-only-not-for-production")
+    ENVIRONMENT = os.environ.get("ZEROTRACE_ENV", "development").strip().lower()
+    SECRET_KEY = os.environ.get(
+        "FLASK_SECRET_KEY", "local-demo-only-not-for-production"
+    )
     SQLALCHEMY_DATABASE_URI = DATABASE_URL
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
@@ -37,3 +40,23 @@ class Config:
     AUTH_BOOTSTRAP_PASSWORD = os.environ.get("ZEROTRACE_BOOTSTRAP_PASSWORD", "")
     AUTH_BOOTSTRAP_ROLE = os.environ.get("ZEROTRACE_BOOTSTRAP_ROLE", "admin")
     AUTH_BOOTSTRAP_TENANT = os.environ.get("ZEROTRACE_BOOTSTRAP_TENANT", "tenant_local")
+    AUTH_MFA_ISSUER = os.environ.get("ZEROTRACE_MFA_ISSUER", "ZeroTrace")
+    AUTH_MFA_ENCRYPTION_KEY = os.environ.get("ZEROTRACE_MFA_ENCRYPTION_KEY", "")
+    AUTH_PASSWORD_RESET_TTL_SECONDS = int(
+        os.environ.get("ZEROTRACE_PASSWORD_RESET_TTL_SECONDS", "1800")
+    )
+    AUTH_LOCKOUT_SECONDS = int(os.environ.get("ZEROTRACE_LOCKOUT_SECONDS", "900"))
+    AUTH_OIDC_ENABLED = os.environ.get("ZEROTRACE_OIDC_ENABLED", "false").lower() == "true"
+    AUTH_OIDC_ISSUER = os.environ.get("ZEROTRACE_OIDC_ISSUER", "").rstrip("/")
+    AUTH_OIDC_CLIENT_ID = os.environ.get("ZEROTRACE_OIDC_CLIENT_ID", "")
+    AUTH_OIDC_CLIENT_SECRET = os.environ.get("ZEROTRACE_OIDC_CLIENT_SECRET", "")
+    AUTH_OIDC_SCOPE = os.environ.get("ZEROTRACE_OIDC_SCOPE", "openid email profile")
+    AUTH_OIDC_AUTO_PROVISION = (
+        os.environ.get("ZEROTRACE_OIDC_AUTO_PROVISION", "false").lower() == "true"
+    )
+    AUTH_OIDC_DEFAULT_ROLE = os.environ.get("ZEROTRACE_OIDC_DEFAULT_ROLE", "viewer")
+    AUTH_OIDC_TENANT = os.environ.get("ZEROTRACE_OIDC_TENANT", "tenant_local")
+    AUTH_OIDC_REDIRECT_PATH = os.environ.get(
+        "ZEROTRACE_OIDC_REDIRECT_PATH", "/api/v1/auth/oidc/callback"
+    )
+    TRUST_PROXY = os.environ.get("ZEROTRACE_TRUST_PROXY", "false").lower() == "true"

@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .extensions import db
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class UserAccount(db.Model):
@@ -18,6 +18,12 @@ class UserAccount(db.Model):
     active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    password_changed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+    failed_login_count = db.Column(db.Integer, nullable=False, default=0)
+    locked_until = db.Column(db.DateTime(timezone=True), nullable=True)
+    mfa_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    mfa_secret = db.Column(db.String(512), nullable=True)
+    mfa_pending_secret = db.Column(db.String(512), nullable=True)
 
 
 class AuthSession(db.Model):
@@ -28,10 +34,55 @@ class AuthSession(db.Model):
     user_id = db.Column(db.String(96), db.ForeignKey("user_accounts.id"), nullable=False, index=True)
     tenant_id = db.Column(db.String(64), nullable=False, index=True)
     csrf_token = db.Column(db.String(128), nullable=False)
+    auth_method = db.Column(db.String(32), nullable=False, default="password")
+    mfa_verified = db.Column(db.Boolean, nullable=False, default=True)
+    ip_address = db.Column(db.String(64), nullable=True)
+    user_agent = db.Column(db.String(512), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     last_seen_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
     revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+
+class PasswordResetToken(db.Model):
+    __tablename__ = "password_reset_tokens"
+
+    id = db.Column(db.String(96), primary_key=True)
+    token_hash = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.String(96), db.ForeignKey("user_accounts.id"), nullable=False, index=True)
+    tenant_id = db.Column(db.String(64), nullable=False, index=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
+    used_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+
+class OidcIdentity(db.Model):
+    __tablename__ = "oidc_identities"
+    __table_args__ = (
+        db.UniqueConstraint("issuer", "subject", name="oidc_identity_issuer_subject"),
+    )
+
+    id = db.Column(db.String(96), primary_key=True)
+    issuer = db.Column(db.String(512), nullable=False)
+    subject = db.Column(db.String(255), nullable=False)
+    user_id = db.Column(db.String(96), db.ForeignKey("user_accounts.id"), nullable=False, index=True)
+    tenant_id = db.Column(db.String(64), nullable=False, index=True)
+    email = db.Column(db.String(254), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class AuthAuditEvent(db.Model):
+    __tablename__ = "auth_audit_events"
+
+    id = db.Column(db.String(96), primary_key=True)
+    event_type = db.Column(db.String(64), nullable=False, index=True)
+    outcome = db.Column(db.String(32), nullable=False, index=True)
+    user_id = db.Column(db.String(96), nullable=True, index=True)
+    tenant_id = db.Column(db.String(64), nullable=True, index=True)
+    ip_address = db.Column(db.String(64), nullable=True)
+    user_agent = db.Column(db.String(512), nullable=True)
+    detail = db.Column(db.String(512), nullable=True)
+    created_at = db.Column(db.DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class DemoScenario(db.Model):

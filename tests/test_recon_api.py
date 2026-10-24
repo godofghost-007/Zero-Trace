@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
@@ -7,8 +7,10 @@ from app.recon import (
     AdapterResult,
     InMemoryReconRepository,
     ReconEngine,
+    ReconError,
     Scope,
     SyntheticAdapter,
+    Target,
 )
 from app.recon_api import ReconQueue, create_recon_app
 from app.recon_authorization import AuthorizationRegistry, DnsTxtResolver
@@ -33,7 +35,7 @@ class ReconApiTests(unittest.TestCase):
             targets=("lab.example.test", "other.example.test"),
             environment="synthetic",
             approved=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
             profiles=("synthetic_inventory_v1",),
         )
         self.queue.add_scope(self.scope)
@@ -191,7 +193,7 @@ class ReconApiTests(unittest.TestCase):
             targets=("lab.example.test",),
             environment="isolated_lab",
             approved=True,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
             profiles=("synthetic_inventory_v1",),
         )
         queue.add_scope(isolated_scope)
@@ -441,3 +443,34 @@ class ReconApiTests(unittest.TestCase):
             "/api/v1/recon/scans", headers=headers, json=payload
         )
         self.assertEqual(response.status_code, 409)
+
+    def test_queue_depth_and_target_cooldown_are_bounded(self) -> None:
+        repository = InMemoryReconRepository()
+        engine = ReconEngine(
+            repository,
+            {
+                "synthetic_inventory_v1": SyntheticAdapter(
+                    AdapterResult(("lab.example.test",), (), ())
+                )
+            },
+        )
+        queue = ReconQueue(
+            engine,
+            repository,
+            max_queue_depth=1,
+            target_cooldown_seconds=60,
+        )
+        queue.add_scope(self.scope)
+        queue.enqueue(
+            self.scope,
+            Target("lab.example.test", "domain"),
+            "synthetic_inventory_v1",
+            None,
+        )
+        with self.assertRaises(ReconError):
+            queue.enqueue(
+                self.scope,
+                Target("other.example.test", "domain"),
+                "synthetic_inventory_v1",
+                None,
+            )
