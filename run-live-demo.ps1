@@ -60,7 +60,7 @@ try {
             -WorkingDirectory $root -PassThru -WindowStyle Hidden
 
         $ready = $false
-        for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        for ($attempt = 0; $attempt -lt 480; $attempt++) {
             Start-Sleep -Milliseconds 250
             try {
                 $probe = Invoke-WebRequest -Uri "http://127.0.0.1:8765/ready" `
