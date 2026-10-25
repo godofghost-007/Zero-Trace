@@ -6,9 +6,10 @@ evidence below is true for the exact commit and the exact deployment target.
 
 ## Current status
 
-**NOT PASSED.** The repository has strong local evidence, but no real VPS or
-Supabase deployment has been performed, no signed release exists, and no human
-signoff is recorded.
+**NOT PASSED.** The repository has strong local evidence at commit `79c1507`
+on `feature/phase-17-production-hardening`, but that commit has not been pushed
+to a remote, no real VPS or Supabase deployment has been performed, no signed
+release exists, and no human signoff is recorded.
 
 ## Required evidence
 
