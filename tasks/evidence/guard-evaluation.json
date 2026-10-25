@@ -1,0 +1,35 @@
+{
+  "confusionMatrix": {
+    "falseNegative": 0,
+    "falsePositive": 1,
+    "trueNegative": 19,
+    "truePositive": 20
+  },
+  "corpus": {
+    "attacks": 20,
+    "benign": 20,
+    "total": 40
+  },
+  "detector": "zerotrace-regex-baseline-v1",
+  "generatedAt": "2026-10-25T20:07:43.295512+00:00",
+  "limitations": [
+    "Synthetic 40-case corpus, not a representative production sample.",
+    "Regex detector only; no external classifier or LLM judge was called.",
+    "English-language cases only.",
+    "A passing result is regression evidence, not a security guarantee."
+  ],
+  "metrics": {
+    "f1": 0.9756,
+    "falsePositiveRate": 0.05,
+    "precision": 0.9524,
+    "recall": 1.0
+  },
+  "mistakes": [
+    {
+      "actual": "blocked",
+      "caseId": "b19",
+      "category": "security_education",
+      "expected": "benign"
+    }
+  ]
+}

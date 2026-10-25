@@ -1,0 +1,31 @@
+{
+  "concurrency": 10,
+  "elapsedSeconds": 1.224,
+  "embedded": true,
+  "errorRate": 0.0,
+  "generatedAt": "2026-10-25T20:19:56.952745+00:00",
+  "latencyMs": {
+    "max": 112.91,
+    "mean": 59.37,
+    "p50": 56.26,
+    "p95": 92.69,
+    "p99": 109.26
+  },
+  "limitations": [
+    "Embedded single-process Flask server, not the production Gunicorn topology.",
+    "Temporary SQLite database, not PostgreSQL.",
+    "Loopback only; no TLS, proxy, or network latency.",
+    "Smoke-level evidence, not a capacity or saturation benchmark."
+  ],
+  "passed": true,
+  "requests": 200,
+  "statuses": {
+    "200": 200
+  },
+  "target": "http://127.0.0.1:17345/api/v1/health",
+  "thresholds": {
+    "maxErrorRate": 0.01,
+    "maxP95Ms": 1000.0
+  },
+  "throughputRequestsPerSecond": 163.36
+}

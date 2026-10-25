@@ -27,6 +27,7 @@ class MigrationTests(unittest.TestCase):
                 "0006_correlation",
                 "0007_live_runtime",
                 "0008_identity_hardening",
+                "0009_scan_schedules",
             ],
         )
         self.assertIn("processed_events", sql)

@@ -22,7 +22,6 @@ Security constraints (enforced, not advisory):
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Callable, Mapping, Protocol
 import hashlib
 import hmac
@@ -32,7 +31,7 @@ import time
 import threading
 from uuid import uuid4
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.events import EventEnvelope
@@ -62,7 +61,12 @@ class GuardTransport(Protocol):
 
 @dataclass(frozen=True)
 class GuardConfig:
-    """Immutable Guard configuration."""
+    """Immutable Guard configuration.
+
+    ``api_key_digest`` is the current BFF credential. During rotation, set
+    ``previous_api_key_digest`` as well, deploy the new BFF key, then remove the
+    previous digest. Both values are HMAC digests, never provider keys.
+    """
 
     api_key_secret: str
     api_key_digest: str
@@ -70,16 +74,27 @@ class GuardConfig:
     max_request_bytes: int = 64 * 1024
     request_timeout_seconds: int = 30
     require_api_key: bool = True
+    previous_api_key_digest: str | None = None
+    allowed_models: tuple[str, ...] = ()
+    pii_action: str = "block"
 
     def __post_init__(self) -> None:
         if not self.api_key_secret:
             raise ValueError("API key secret is required")
-        if not self.api_key_digest or len(self.api_key_digest) != 64:
-            raise ValueError("API key digest must be a 64-character hex string")
-        try:
-            int(self.api_key_digest, 16)
-        except ValueError as error:
-            raise ValueError("API key digest must be hexadecimal") from error
+        for name, digest in (
+            ("API key digest", self.api_key_digest),
+            ("previous API key digest", self.previous_api_key_digest),
+        ):
+            if digest is None:
+                continue
+            if len(digest) != 64:
+                raise ValueError(
+                    f"{name} must be a 64-character hex string"
+                )
+            try:
+                int(digest, 16)
+            except ValueError as error:
+                raise ValueError(f"{name} must be hexadecimal") from error
         if not self.upstream_allowlist:
             raise ValueError("upstream allowlist is required")
         for upstream in self.upstream_allowlist:
@@ -89,6 +104,13 @@ class GuardConfig:
             raise ValueError("max request bytes must be between 1 and 65536")
         if not 1 <= self.request_timeout_seconds <= 300:
             raise ValueError("request timeout must be between 1 and 300 seconds")
+        if self.pii_action not in {"block", "redact"}:
+            raise ValueError("pii_action must be block or redact")
+        if self.allowed_models and any(
+            not isinstance(model, str) or not model.strip()
+            for model in self.allowed_models
+        ):
+            raise ValueError("allowed models must be non-empty strings")
 
 
 @dataclass(frozen=True)
@@ -158,6 +180,12 @@ class PromptInjectionDetector:
             r"no\s+safety|no\s+filter)",
             re.IGNORECASE,
         ),
+        # A claim that the safety layer is disabled is itself a jailbreak
+        # attempt, even when it does not contain an instruction-override verb.
+        re.compile(
+            r"(?i)(safety|content)\s+filter\s+(?:is\s+)?(?:disabled|off)",
+            re.IGNORECASE,
+        ),
     ]
 
     def scan(self, text: str) -> DetectionResult:
@@ -174,21 +202,38 @@ class PromptInjectionDetector:
 
 
 class PIIScanner:
-    """PII detection for response scanning."""
+    """PII detection and bounded redaction for model responses.
 
-    _PII_PATTERNS = [
-        re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),  # SSN
-        re.compile(
-            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
-        ),  # Email
-        re.compile(r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b"),  # Credit card
-        re.compile(r"\b\d{3}[- ]?\d{3}[- ]?\d{4}\b"),  # Phone number
-    ]
+    Detection is intentionally conservative and deterministic. It is a
+    last-line control, not a claim that the regexes cover every jurisdiction or
+    every personal-data category.
+    """
+
+    _PII_PATTERNS = (
+        ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED:SSN]"),
+        (
+            "email",
+            re.compile(
+                r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+            ),
+            "[REDACTED:EMAIL]",
+        ),
+        (
+            "credit_card",
+            re.compile(r"\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b"),
+            "[REDACTED:CARD]",
+        ),
+        (
+            "phone",
+            re.compile(r"\b\d{3}[- ]?\d{3}[- ]?\d{4}\b"),
+            "[REDACTED:PHONE]",
+        ),
+    )
 
     def scan(self, text: str) -> DetectionResult:
         if not text:
             return DetectionResult(blocked=False)
-        for pattern in self._PII_PATTERNS:
+        for _label, pattern, _replacement in self._PII_PATTERNS:
             if pattern.search(text):
                 return DetectionResult(
                     blocked=True,
@@ -196,6 +241,25 @@ class PIIScanner:
                     details=pattern.pattern,
                 )
         return DetectionResult(blocked=False)
+
+    def redact(self, text: str) -> tuple[DetectionResult, str]:
+        """Return the detection result and a redacted copy of ``text``."""
+
+        if not text:
+            return DetectionResult(blocked=False), text
+        detected = False
+        redacted = text
+        for _label, pattern, replacement in self._PII_PATTERNS:
+            if pattern.search(redacted):
+                detected = True
+                redacted = pattern.sub(replacement, redacted)
+        return (
+            DetectionResult(
+                blocked=detected,
+                reason="pii_detected" if detected else None,
+            ),
+            redacted,
+        )
 
 
 def _validate_chat_completion_request(body: Mapping[str, object]) -> None:
@@ -232,6 +296,11 @@ def _validate_chat_completion_request(body: Mapping[str, object]) -> None:
         if not isinstance(temperature, (int, float)) or not 0.0 <= temperature <= 2.0:
             raise GuardError("temperature must be between 0 and 2", 400)
 
+    top_p = body.get("top_p")
+    if top_p is not None:
+        if not isinstance(top_p, (int, float)) or not 0.0 <= top_p <= 1.0:
+            raise GuardError("top_p must be between 0 and 1", 400)
+
     max_tokens = body.get("max_tokens")
     if max_tokens is not None:
         if (
@@ -242,16 +311,59 @@ def _validate_chat_completion_request(body: Mapping[str, object]) -> None:
             raise GuardError("max_tokens must be between 1 and 4096", 400)
 
 
-def _is_allowlisted_upstream(url: str, allowlist: tuple[str, ...]) -> bool:
-    """Check if a URL matches an allowlisted upstream (no SSRF)."""
-    if not url.startswith("https://"):
-        return False
+def _upstream_parts(url: str) -> tuple[str, int | None, str] | None:
+    """Return a normalized (host, port, path) tuple or ``None``.
+
+    Guard only accepts an HTTPS origin with no credentials, query, fragment, or
+    non-root path. This prevents a caller from smuggling a different endpoint
+    through the client-controlled ``upstream`` field while still matching an
+    allowlisted hostname.
+    """
+
     from urllib.parse import urlsplit
 
-    host = urlsplit(url).hostname or ""
+    if not isinstance(url, str) or not url.startswith("https://"):
+        return None
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return None
+    if (
+        parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or parts.path not in {"", "/"}
+    ):
+        return None
+    host = (parts.hostname or "").lower().rstrip(".")
+    if not host:
+        return None
+    if port not in {None, 443}:
+        return None
+    return host, port, "/"
+
+
+def _is_allowlisted_upstream(url: str, allowlist: tuple[str, ...]) -> bool:
+    """Check if a URL matches an allowlisted HTTPS origin (no SSRF)."""
+
+    candidate = _upstream_parts(url)
+    if candidate is None:
+        return False
+    host = candidate[0]
     for allowed in allowlist:
-        allowed_host = urlsplit(allowed).hostname or ""
-        if host == allowed_host or host.endswith("." + allowed_host):
+        allowed_parts = _upstream_parts(allowed)
+        if allowed_parts is None:
+            continue
+        allowed_host = allowed_parts[0]
+        if allowed_host.startswith("*."):
+            # A wildcard must be explicit. An exact allowlist entry never
+            # implies its subdomains.
+            suffix = allowed_host[2:]
+            if suffix and host.endswith("." + suffix):
+                return True
+        elif host == allowed_host:
             return True
     return False
 
@@ -315,18 +427,26 @@ def create_guard_app(
     async def chat_completions(
         request: Request,
         body: dict[str, object],
+        http_response: Response,
         x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     ) -> dict[str, object]:
-        # Authenticate
+        # Authenticate. During key rotation both the current and the previous
+        # digest are accepted, so the BFF can be redeployed without a Guard
+        # outage. Both values are digests, not provider keys.
         if config.require_api_key:
             if not x_api_key or not x_api_key.strip():
                 raise GuardError("API key is required", 401)
-            expected_digest = config.api_key_digest
             secret = config.api_key_secret.encode("utf-8")
             actual_digest = hmac.new(
                 secret, x_api_key.encode("utf-8"), hashlib.sha256
             ).hexdigest()
-            if not hmac.compare_digest(actual_digest, expected_digest):
+            accepted = [config.api_key_digest]
+            if config.previous_api_key_digest:
+                accepted.append(config.previous_api_key_digest)
+            if not any(
+                hmac.compare_digest(actual_digest, expected)
+                for expected in accepted
+            ):
                 raise GuardError("invalid API key", 401)
 
         principal = principal_provider(request)
@@ -338,6 +458,11 @@ def create_guard_app(
 
         # Validate request schema
         _validate_chat_completion_request(body)
+
+        if config.allowed_models:
+            model = str(body.get("model", ""))
+            if model not in config.allowed_models:
+                raise GuardError("model is not allowlisted", 403)
 
         # Scan prompts for injection
         messages = body.get("messages", [])
@@ -365,8 +490,13 @@ def create_guard_app(
         if not isinstance(upstream, str) or not upstream:
             upstream = config.upstream_allowlist[0]
 
-        if not _is_allowlisted_upstream(upstream, config.upstream_allowlist):
+        upstream_parts = _upstream_parts(upstream)
+        if (
+            upstream_parts is None
+            or not _is_allowlisted_upstream(upstream, config.upstream_allowlist)
+        ):
             raise GuardError("upstream is not allowlisted", 403)
+        canonical_upstream = f"https://{upstream_parts[0]}"
 
         # Build upstream request (non-streaming only in MVP)
         upstream_body = {
@@ -376,6 +506,8 @@ def create_guard_app(
             "max_tokens": body.get("max_tokens", 1024),
             "stream": False,
         }
+        if body.get("top_p") is not None:
+            upstream_body["top_p"] = body["top_p"]
         upstream_body_bytes = json.dumps(upstream_body).encode("utf-8")
 
         if len(upstream_body_bytes) > config.max_request_bytes:
@@ -384,7 +516,7 @@ def create_guard_app(
         # Call upstream with bounded timeout
         try:
             response_bytes = transport.post(
-                upstream.rstrip("/") + "/v1/chat/completions",
+                canonical_upstream + "/v1/chat/completions",
                 body=upstream_body_bytes,
                 timeout_seconds=config.request_timeout_seconds,
             )
@@ -402,20 +534,38 @@ def create_guard_app(
         if not isinstance(response, dict):
             raise GuardError("upstream response must be an object", 502)
 
-        # Scan response for PII
+        # Scan response for PII. ``block`` is the safe default. ``redact``
+        # keeps the response usable while replacing detected values with typed
+        # placeholders, and records that a transformation happened.
         choices = response.get("choices", [])
+        redacted = False
         if isinstance(choices, list):
             for choice in choices:
-                if isinstance(choice, dict):
-                    message = choice.get("message", {})
-                    if isinstance(message, dict):
-                        content = message.get("content", "")
-                        if isinstance(content, str):
-                            result = pii_scanner.scan(content)
-                            if result.blocked:
-                                raise GuardError(
-                                    result.reason or "pii_detected", 400
-                                )
+                if not isinstance(choice, dict):
+                    continue
+                message = choice.get("message", {})
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content", "")
+                if not isinstance(content, str):
+                    continue
+                result, safe_content = pii_scanner.redact(content)
+                if not result.blocked:
+                    continue
+                if config.pii_action == "block":
+                    if event_publisher is not None:
+                        _publish_guard_event(
+                            event_publisher,
+                            "response_blocked",
+                            {
+                                "reason": result.reason,
+                                "client_id": client_id,
+                                "model": body.get("model"),
+                            },
+                        )
+                    raise GuardError(result.reason or "pii_detected", 400)
+                message["content"] = safe_content
+                redacted = True
 
         # Emit audit event
         if event_publisher is not None:
@@ -425,13 +575,16 @@ def create_guard_app(
                 {
                     "client_id": client_id,
                     "model": body.get("model"),
-                    "upstream": upstream,
+                    "upstream": canonical_upstream,
                     "message_count": (
                         len(messages) if isinstance(messages, list) else 0
                     ),
+                    "pii_redacted": redacted,
                 },
             )
 
+        if redacted:
+            http_response.headers["X-ZeroTrace-PII-Redacted"] = "true"
         return response
 
     return app

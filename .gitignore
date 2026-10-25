@@ -18,6 +18,7 @@ venv/
 *.pem
 *.key
 secrets/
+deploy/observability/metrics-token
 
 # Build and distribution output
 build/

@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "date": "2026-10-25",
+  "scope": "local configuration validation; not a production deployment",
+  "compose": {
+    "command": "docker compose -f deploy/compose.prod.yaml -f deploy/compose.observability.yaml config --quiet",
+    "result": "exit 0"
+  },
+  "prometheus": {
+    "command": "promtool check config /etc/prometheus/prometheus.yml",
+    "result": "SUCCESS",
+    "rule_files": 1,
+    "rules": 8
+  },
+  "alertmanager": {
+    "command": "amtool check-config /etc/alertmanager/alertmanager.yml",
+    "result": "SUCCESS",
+    "receivers": 1,
+    "receiver_type": "null"
+  },
+  "grafana": {
+    "dashboard": "ZeroTrace overview",
+    "panels": 6,
+    "datasource": "Prometheus"
+  },
+  "caddy": {
+    "image": "zerotrace-caddy:ci",
+    "command": "caddy validate --config /etc/caddy/Caddyfile",
+    "result": "Valid configuration",
+    "rate_limit_test": {
+      "events": 2,
+      "window": "1m",
+      "request_1": 200,
+      "request_2": 200,
+      "request_3": 429
+    }
+  }
+}

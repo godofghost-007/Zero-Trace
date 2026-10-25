@@ -2,20 +2,29 @@ name: zerotrace
 
 services:
   engine:
+    image: ${ZEROTRACE_ENGINE_IMAGE:-zerotrace-engine:local}
     build:
       context: ..
       dockerfile: Dockerfile.engine
     env_file:
-      - ../.env.production
+      - ${ZEROTRACE_ENV_FILE:-../.env.production}
     environment:
       ZEROTRACE_ENGINE_HOST: 127.0.0.1
       ZEROTRACE_ENGINE_PORT: "8765"
       ZEROTRACE_LIVE_DB: /data/live-engine.sqlite3
+      HOME: /tmp
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
     volumes:
       - engine_data:/data
     expose:
       - "8765"
     restart: unless-stopped
+    read_only: true
+    init: true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
     cap_drop:
       - ALL
     security_opt:
@@ -33,7 +42,51 @@ services:
       start_period: 20s
       retries: 3
 
+  guard:
+    # Reuse the engine image so Guard ships with the same audited Python
+    # dependency set. The command is overridden; Guard never starts the engine.
+    image: ${ZEROTRACE_ENGINE_IMAGE:-zerotrace-engine:local}
+    network_mode: "service:engine"
+    command: ["python", "-m", "scripts.guard_proxy"]
+    env_file:
+      - ${ZEROTRACE_GUARD_ENV_FILE:-../.env.guard}
+    environment:
+      ZEROTRACE_GUARD_HOST: 127.0.0.1
+      ZEROTRACE_GUARD_PORT: "8766"
+      ZEROTRACE_GUARD_AUDIT_LOG: /data/guard-audit.jsonl
+      HOME: /tmp
+      TMPDIR: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
+    volumes:
+      - guard_data:/data
+    depends_on:
+      engine:
+        condition: service_healthy
+    restart: unless-stopped
+    read_only: true
+    init: true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: "0.5"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8766/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
   bff:
+    image: ${ZEROTRACE_BFF_IMAGE:-zerotrace-bff:local}
     build:
       context: ../frontend
       dockerfile: Dockerfile
@@ -41,7 +94,7 @@ services:
     # engine URL. The engine port is not published to the host.
     network_mode: "service:engine"
     env_file:
-      - ../.env.production
+      - ${ZEROTRACE_ENV_FILE:-../.env.production}
     environment:
       ZEROTRACE_ENV: production
       ZEROTRACE_TRUST_PROXY: "true"
@@ -49,6 +102,8 @@ services:
       AUTO_CREATE_SCHEMA: "false"
       DEMO_MODE: "false"
       ZEROTRACE_ENGINE_URL: http://127.0.0.1:8765
+      ZEROTRACE_GUARD_PROXY_ENABLED: "true"
+      ZEROTRACE_GUARD_PROXY_URL: http://127.0.0.1:8766
       ZEROTRACE_DATA_DIR: /data
       AUDIT_DB_PATH: /data/guard-audit.sqlite
     volumes:
@@ -56,7 +111,14 @@ services:
     depends_on:
       engine:
         condition: service_healthy
+      guard:
+        condition: service_healthy
     restart: unless-stopped
+    read_only: true
+    init: true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
     cap_drop:
       - ALL
     security_opt:
@@ -75,7 +137,10 @@ services:
       retries: 3
 
   caddy:
-    image: caddy:2.10-alpine
+    image: ${ZEROTRACE_CADDY_IMAGE:-zerotrace-caddy:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
     depends_on:
       engine:
         condition: service_healthy
@@ -90,6 +155,11 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
+    read_only: true
+    init: true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
     cap_drop:
       - ALL
     cap_add:
@@ -101,6 +171,7 @@ services:
 
 volumes:
   engine_data:
+  guard_data:
   bff_data:
   caddy_data:
   caddy_config:

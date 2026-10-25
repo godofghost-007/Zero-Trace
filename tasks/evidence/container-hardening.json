@@ -1,0 +1,21 @@
+{
+  "ok": true,
+  "generatedAt": "2026-10-25T20:19:33.242579+00:00",
+  "services": [
+    "bff",
+    "caddy",
+    "engine",
+    "guard"
+  ],
+  "findings": [],
+  "checks": {
+    "nonRootReadOnly": true,
+    "capDropAll": true,
+    "noNewPrivileges": true,
+    "engineNotPublished": true,
+    "guardNotPublished": true,
+    "guardSharedEngineNamespace": true,
+    "bffSharedEngineNamespace": true,
+    "resourceLimits": true
+  }
+}

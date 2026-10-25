@@ -30,6 +30,7 @@ from .intel import (
 from .intel_api import Ingestion
 from .intel_feeds import EpssRecord, KevRecord
 from .recon import NormalizedService, Scope
+from .scan_schedule import ScanSchedule
 
 
 def _json(value: object) -> str:
@@ -236,6 +237,27 @@ class LiveStore:
                 CREATE INDEX IF NOT EXISTS live_scans_scope_idx
                     ON live_scans (scope_id, created_at);
 
+                CREATE TABLE IF NOT EXISTS live_scan_schedules (
+                    schedule_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    scope_id TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    interval_seconds INTEGER NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    next_run_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    authorization_id TEXT,
+                    last_run_at TEXT,
+                    last_scan_id TEXT,
+                    last_state TEXT,
+                    last_error TEXT,
+                    runs INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE INDEX IF NOT EXISTS live_scan_schedules_due_idx
+                    ON live_scan_schedules (enabled, next_run_at);
+
                 CREATE TABLE IF NOT EXISTS live_intel_facts (
                     cve_id TEXT PRIMARY KEY,
                     payload TEXT NOT NULL
@@ -401,6 +423,79 @@ class LiveStore:
             }
             for row in rows
         ]
+
+    # -- scheduled scans -----------------------------------------------
+    def save_scan_schedule(self, schedule: ScanSchedule) -> None:
+        with self._lock, self._session() as connection:
+            connection.execute(
+                """
+                INSERT INTO live_scan_schedules
+                    (schedule_id, owner_id, scope_id, target, profile_id,
+                     interval_seconds, enabled, next_run_at, created_at,
+                     authorization_id, last_run_at, last_scan_id, last_state,
+                     last_error, runs)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (schedule_id) DO UPDATE SET
+                    enabled = excluded.enabled,
+                    next_run_at = excluded.next_run_at,
+                    authorization_id = excluded.authorization_id,
+                    last_run_at = excluded.last_run_at,
+                    last_scan_id = excluded.last_scan_id,
+                    last_state = excluded.last_state,
+                    last_error = excluded.last_error,
+                    runs = excluded.runs
+                """,
+                (
+                    schedule.schedule_id,
+                    schedule.owner_id,
+                    schedule.scope_id,
+                    schedule.target,
+                    schedule.profile_id,
+                    schedule.interval_seconds,
+                    1 if schedule.enabled else 0,
+                    schedule.next_run_at.isoformat(),
+                    schedule.created_at.isoformat(),
+                    schedule.authorization_id,
+                    _iso(schedule.last_run_at),
+                    schedule.last_scan_id,
+                    schedule.last_state,
+                    schedule.last_error,
+                    schedule.runs,
+                ),
+            )
+
+    def load_scan_schedules(self) -> list[ScanSchedule]:
+        with self._session() as connection:
+            rows = connection.execute(
+                "SELECT * FROM live_scan_schedules ORDER BY next_run_at"
+            ).fetchall()
+        return [
+            ScanSchedule(
+                schedule_id=str(row["schedule_id"]),
+                owner_id=str(row["owner_id"]),
+                scope_id=str(row["scope_id"]),
+                target=str(row["target"]),
+                profile_id=str(row["profile_id"]),
+                interval_seconds=int(row["interval_seconds"]),
+                enabled=bool(row["enabled"]),
+                next_run_at=_parse_datetime(str(row["next_run_at"])),  # type: ignore[arg-type]
+                created_at=_parse_datetime(str(row["created_at"])),  # type: ignore[arg-type]
+                authorization_id=row["authorization_id"],
+                last_run_at=_parse_datetime(row["last_run_at"]),
+                last_scan_id=row["last_scan_id"],
+                last_state=row["last_state"],
+                last_error=row["last_error"],
+                runs=int(row["runs"]),
+            )
+            for row in rows
+        ]
+
+    def delete_scan_schedule(self, schedule_id: str) -> None:
+        with self._lock, self._session() as connection:
+            connection.execute(
+                "DELETE FROM live_scan_schedules WHERE schedule_id = ?",
+                (schedule_id,),
+            )
 
     # -- intel ----------------------------------------------------------
     def save_intel_state(

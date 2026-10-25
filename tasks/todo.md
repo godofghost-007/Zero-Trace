@@ -262,18 +262,18 @@
 | P17A1 | PostgreSQL live-store contract, migration 0007, and focused tests | Verified (225 root tests with PostgreSQL) | P16-EVIDENCE |
 | P17A2 | Live-engine PostgreSQL switch, pooling, migration/rollback proof | Verified (migration apply/rollback test) | P17A1 |
 | P17A3 | OIDC/SAML, MFA, password reset/disable, session inventory, auth matrix, managed secrets | Implemented (MFA/OIDC/reset/sessions/audit; SAML deferred; OIDC not live-provider tested) | P17A2 |
-| P17B1 | Gunicorn, TLS reverse proxy, security headers, request limits, edge rate limits | Implemented (Caddy validated; edge rate limit deferred) | P17A3 |
-| P17B2 | Reproducible images, health/readiness, non-root, resource limits, rollback proof | Implemented (images built and health-checked; multi-worker schema race fixed; rollback drill pending) | P17B1 |
+| P17B1 | Gunicorn, TLS reverse proxy, security headers, request limits, edge rate limits | Implemented (Caddy custom image validated; 2-request test returned 200/200/429) | P17A3 |
+| P17B2 | Reproducible images, health/readiness, non-root, resource limits, rollback proof | Implemented (images built and health-checked; multi-worker schema race fixed; migration rollback drill passed locally) | P17B1 |
 | P17C1 | Queue concurrency, per-target rate limits, cancellation, timeouts, output caps | Implemented (queue depth/cooldown plus existing limits) | P17B2 |
-| P17C2 | Pinned scanner versions, sandboxing, target allow/deny, scheduled-scope path | Pending (scanner image pins Subfinder; runtime version gate and sandbox proof pending) | P17C1 |
-| P17D1 | Encrypted off-host backups, retention, restore drill, RPO/RTO | Pending | P17C2 |
-| P17D2 | Structured logs, metrics, traces, dashboards, alerts, SLOs, runbooks | Pending | P17D1 |
-| P17E1 | NVD pagination/retries/dedup/provenance, matching quality, freshness | Pending | P17D2 |
-| P17E2 | Guard evaluation, response scanning, policy, upstream allowlist, metrics | Pending (ADR and slot configuration exist; evaluation pending) | P17E1 |
-| P17E3 | Encryption, key rotation, retention/deletion, PII, residency, privacy/DPA | Pending | P17E2 |
-| P17F1 | E2E, migration, load, security, dependency, container, restore tests; SBOM | Partial (CI, CodeQL, unit/integration/container builds; load/SBOM/restore pending) | P17E3 |
-| P17F2 | Branch protection, changelog, semver, staged rollout, rollback, config validation | Partial (production config validation and Apache-2.0 metadata; release process pending) | P17F1 |
-| P18 | Release-readiness gate and human signoff | Pending | P17F2 |
+| P17C2 | Pinned scanner versions, sandboxing, target allow/deny, scheduled-scope path | Implemented (runtime version gates, target policy, container hardening, schedule API/persistence; no schedule UI) | P17C1 |
+| P17D1 | Encrypted off-host backups, retention, restore drill, RPO/RTO | Implemented locally (encrypted PostgreSQL restore drill 8.81s; no production VPS/Supabase drill) | P17C2 |
+| P17D2 | Structured logs, metrics, traces, dashboards, alerts, SLOs, runbooks | Implemented (Prometheus/Alertmanager/Grafana validated; overlay not run in production) | P17D1 |
+| P17E1 | NVD pagination/retries/dedup/provenance, matching quality, freshness | Partial (feed-age metrics and last-known-good snapshots; full NVD hardening pending) | P17D2 |
+| P17E2 | Guard evaluation, response scanning, policy, upstream allowlist, metrics | Implemented (40-case eval, block/redact, allowlist, key rotation, loopback proxy, Guard sidecar, authenticated BFF chat route; no live provider call) | P17E1 |
+| P17E3 | Encryption, key rotation, retention/deletion, PII, residency, privacy/DPA | Partial (encrypted backups, PII policy, retention, data inventory; no automated erasure or counsel-reviewed DPA) | P17E2 |
+| P17F1 | E2E, migration, load, security, dependency, container, restore tests; SBOM | Partial (migration/load/security/restore/dependency/SBOM evidence; no browser E2E) | P17E3 |
+| P17F2 | Branch protection, changelog, semver, staged rollout, rollback, config validation | Partial (ruleset template, changelog, release workflow, rollout/rollback docs; not run in GitHub) | P17F1 |
+| P18 | Release-readiness gate and human signoff | Pending (real deployment, signed release, and human signoff required) | P17F2 |
 
 ### Recorded human decision — 2026-10-22
 

@@ -47,6 +47,17 @@ jobs:
           python -m pip install -e . pytest ruff
       - name: Lint (critical errors)
         run: ruff check app scripts tests --select E9,F63,F7,F82
+      - name: Dependency audit
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit
+      - name: SBOM
+        run: python scripts/generate_sbom.py --output sbom-engine.json
+      - name: Upload engine SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-engine
+          path: sbom-engine.json
       - name: Test with disposable PostgreSQL databases
         env:
           ZEROTRACE_TEST_DATABASE_URL: postgresql://zerotrace:zerotrace-ci-only@127.0.0.1:5432/zerotrace
@@ -66,6 +77,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r frontend/requirements.txt
+      - name: Dependency audit
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit -r frontend/requirements.txt
+      - name: SBOM
+        run: |
+          python scripts/generate_sbom.py \
+            --requirements frontend/requirements.txt \
+            --output sbom-bff.json
+      - name: Upload BFF SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-bff
+          path: sbom-bff.json
       - name: Test
         working-directory: frontend
         run: python -m pytest backend/tests -q
@@ -93,6 +118,35 @@ jobs:
       - name: Build
         run: pnpm build
 
+  runtime-smoke:
+    name: Runtime security and load smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: frontend/requirements.txt
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r frontend/requirements.txt
+      - name: Security smoke
+        run: python scripts/security_smoke.py
+      - name: Load smoke
+        run: |
+          python scripts/load_test.py \
+            --requests 100 --concurrency 10 --fail \
+            --output load-test.json
+      - name: Upload runtime evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-smoke
+          path: |
+            load-test.json
+            tasks/evidence/security-smoke.json
+
   containers:
     name: Container builds
     runs-on: ubuntu-latest
@@ -104,6 +158,7 @@ jobs:
         with:
           context: ./frontend
           push: false
+          load: true
           tags: zerotrace-bff:ci
       - name: Build engine image
         uses: docker/build-push-action@v6
@@ -111,4 +166,34 @@ jobs:
           context: .
           file: ./Dockerfile.engine
           push: false
+          load: true
           tags: zerotrace-engine:ci
+      - name: Build Caddy image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./deploy
+          file: ./deploy/Dockerfile.caddy
+          push: false
+          load: true
+          tags: zerotrace-caddy:ci
+      - name: BFF image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: zerotrace-bff:ci
+          format: spdx-json
+          artifact-name: sbom-bff-image.spdx.json
+          dependency-snapshot: false
+      - name: Engine image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: zerotrace-engine:ci
+          format: spdx-json
+          artifact-name: sbom-engine-image.spdx.json
+          dependency-snapshot: false
+      - name: Caddy image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: zerotrace-caddy:ci
+          format: spdx-json
+          artifact-name: sbom-caddy-image.spdx.json
+          dependency-snapshot: false

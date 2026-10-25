@@ -1,7 +1,7 @@
 # ZeroTrace Production Readiness Review
 
 Date: 2026-10-25
-Baseline: `feature/phase-17-production-hardening` at the Phase 17A/17B/17F
+Baseline: `feature/phase-17-production-hardening` at the Phase 17A-17F
 working tree
 Scope: single-tenant, loopback-local demo and the path to a self-hosted service
 
@@ -10,14 +10,14 @@ Scope: single-tenant, loopback-local demo and the path to a self-hosted service
 | Measure | Current state | Assessment |
 |---|---|---|
 | Local demo completeness | React UI, Flask BFF, FastAPI engine, real Nmap/Subfinder/TLS adapters, scope authorization, auth/RBAC, audit, KEV sync, readiness panel | **~90%** |
-| Single-tenant production readiness | PostgreSQL live-engine store, versioned migrations, MFA/OIDC/password reset, Caddy + container deployment, CI, production config validation; observability, encrypted offsite backup, restore drill, and release gate remain | **~70%** |
+| Single-tenant production readiness | PostgreSQL live-engine store, versioned migrations, MFA/OIDC/password reset, Caddy + container deployment, edge rate limits, scanner policy/version gates, schedules, encrypted backup/restore, metrics/logs/alerts, CI/SBOM/audit, production config validation; real VPS/Supabase deployment, egress proof, browser E2E, signed release, and Phase 18 gate remain | **~80%** |
 | Multi-tenant SaaS readiness | No tenant data plane, no per-tenant isolation, no billing/onboarding/SCIM | **not started** |
 
 The project is a working full-stack application with a credible self-hosted
-deployment path. It is not yet a production-ready release: Phase 17C–17E and
-the Phase 18 gate are still open. The gap is mostly operational evidence,
-observability, backup/restore, scanner runtime controls, and release process,
-not missing UI or missing core logic.
+deployment path. It is not yet a production-ready release: no real VPS or
+Supabase deployment has been performed, and the Phase 18 release gate and human
+signoff are still open. The remaining gap is mostly operational proof, not
+missing core logic.
 
 ## 2. What is already real
 
@@ -40,13 +40,25 @@ not missing UI or missing core logic.
   `DATABASE_URL` is set, uses pooled connections, and has versioned migrations
   with apply/rollback tests. SQLite remains available for the local demo.
 - **Deployment path**: Caddy TLS/security headers, non-root BFF and engine
-  containers, healthchecks, resource limits, loopback-only engine URL, and a
-  documented Supabase/migration/backup runbook in `deploy/README.md`.
+  containers, a loopback Guard sidecar with separate provider secrets,
+  healthchecks, resource limits, loopback-only engine URL, and a documented
+  Supabase/migration/backup runbook in `deploy/README.md`.
 - **Intel**: CISA KEV ingestion is exposed in the UI; NVD and EPSS remain
   API/schedule-only. The demo does not invent feed results.
-- **Quality evidence**: 225 root tests (including disposable PostgreSQL
-  databases), 32 BFF tests, 6 frontend tests, frontend type-check, production
-  build, and both container builds passed at this baseline.
+- **Encrypted recovery**: Fernet-encrypted `.ztb` backups with inner/outer
+  SHA-256 manifests, a destructive PostgreSQL restore drill, retention pruning,
+  and RPO/RTO targets. See `docs/BACKUP-RESTORE.md`.
+- **Observability**: in-process metrics, JSON logs, request IDs, trace
+  propagation, Prometheus rules, Alertmanager, a Grafana dashboard, SLOs, and an
+  operations runbook. See `docs/SLO.md` and `docs/RUNBOOK-OPERATIONS.md`.
+- **Guard boundary**: a loopback-only OpenAI-compatible proxy with a
+  server-side provider key, strict upstream allowlist, model allowlist, PII
+  block/redact policy, key rotation, and a deterministic evaluation corpus. See
+  `docs/GUARD-EVALUATION.md`.
+- **Quality evidence**: 265 root tests (including disposable PostgreSQL
+  databases), 61 BFF tests, 6 frontend tests, frontend type-check, production
+  build, dependency audit, SBOM generation, runtime security smoke, and a
+  smoke-level load test passed at this baseline.
 - **New profile selection**: the Targets console lets the operator select Nmap,
   Subfinder, TLS, and synthetic inventory. Nmap and Subfinder each have their
   own Normal/Medium/High/Deep dropdown inside the profile card. It queues one
@@ -74,59 +86,72 @@ not missing UI or missing core logic.
 
 3. **Production deployment** — **partially implemented**
    - Gunicorn behind Caddy, HSTS/secure cookies/CSP, request-size limits,
-     non-root images, healthchecks, resource limits, and a rollback runbook exist.
-   - Edge rate limiting, egress allowlist proof, and a real VPS/Supabase
-     deployment remain open.
+     per-client edge rate limits, non-root images, healthchecks, resource
+     limits, and a rollback runbook exist.
+   - Egress allowlist proof and a real VPS/Supabase deployment remain open.
 
-4. **Scanner safety and capacity** — **partially implemented**
+4. **Scanner safety and capacity** — **implemented, with sandbox caveats**
    - Four bounded levels, queue depth, per-target cooldown, concurrency limit,
      retries, cancellation, hard timeouts, and output caps exist.
-   - Runtime scanner version verification, sandbox proof, and explicit
-     target allow/deny policy remain open.
+   - Runtime scanner version verification, an explicit target allow/deny policy,
+     and scheduled-scope revalidation exist. See `docs/SCHEDULES.md`.
+   - The container is hardened, but there is no per-scan network namespace or
+     separate filesystem jail beyond the container controls.
    - Normal and Medium are bounded and require the BFF acknowledgement. High and
      Deep require DNS TXT ownership verification. No level enables exploitation,
      brute force, NSE scripts, or automatic remediation.
 
-5. **Backups and disaster recovery** — **open**
-   - Encrypted off-host backups, retention, restore drills, RPO/RTO targets, and
-     a recovery runbook are still required.
+5. **Backups and disaster recovery** — **implemented locally, production drill open**
+   - Encrypted backups, retention, a destructive restore drill, RPO/RTO targets,
+     and a recovery runbook exist.
+   - The drill used a local Docker PostgreSQL, not a production VPS or Supabase
+     project. Off-host copy used a local directory, not rclone/S3.
 
-6. **Observability and operations** — **open**
-   - Structured logs with request IDs exist; metrics, traces, dashboards, alerts,
-     error tracking, SLOs, and on-call ownership are still required.
+6. **Observability and operations** — **implemented, production overlay open**
+   - Metrics, JSON logs, request IDs, trace propagation, dashboards, alerts,
+     SLOs, and runbooks exist.
+   - The overlay has not run against a production stack, and the shipped
+     Alertmanager receiver is null. On-call ownership is still an operator
+     decision.
 
 ### P1 — required before general production use
 
-7. **Intel pipeline hardening**
-   - Full live NVD pagination, feed retries/backoff, deduplication, provenance,
-     CVE-to-service matching quality, and false-positive review.
-   - EPSS and KEV freshness indicators in the UI.
-   - Rate-limit and API-key handling for NVD.
+7. **Intel pipeline hardening** — **partial**
+   - Last-known-good snapshots, feed-age metrics, and NVD/EPSS/KEV scheduling
+     exist.
+   - Full live NVD pagination, retry/backoff, deduplication, provenance,
+     CVE-to-service matching quality, and false-positive review remain open.
+   - EPSS and KEV freshness indicators are not yet in the UI.
 
-8. **Guard hardening**
-   - Evaluate the regex/heuristic detector against a labeled corpus.
-   - Add response scanning/redaction, policy configuration, upstream model
-     allowlisting, and false-positive/negative metrics.
-   - Keep inspect-only as the default; the optional OpenAI-compatible upstream
-     gateway is behind explicit configuration and still needs evaluation.
+8. **Guard hardening** - **implemented, provider evaluation open**
+   - A 40-case labeled corpus, response block/redact policy, upstream model
+     allowlisting, strict HTTPS-origin checks, key rotation, a loopback proxy,
+     and an authenticated BFF `POST /api/v1/guard/chat` route exist.
+   - The detector is regex-based and English-only. No live provider or external
+     classifier was evaluated.
+   - The external detector and Intel model slots are reserved, not implemented.
+   - Guard protects only traffic routed through it.
 
-9. **Data protection and lifecycle**
-   - Encryption at rest and in transit, key rotation, retention/deletion
-     policies, PII handling, data residency, and tenant export/delete.
-   - Privacy review and a data-processing agreement for real customer data.
+9. **Data protection and lifecycle** — **partial**
+   - TLS, encrypted backups, MFA-secret encryption, key rotation, retention
+     pruning, PII block/redact, and a data inventory exist.
+   - There is no automated data-subject export/erasure endpoint, no tenant
+     isolation, and no counsel-reviewed DPA or privacy notice.
+   - Encryption at rest depends on the database and backup provider.
 
-10. **Testing and quality gates**
-    - End-to-end browser tests for login, scope creation, multi-profile scans,
+10. **Testing and quality gates** — **partial**
+    - Migration apply/rollback, encrypted restore, security smoke, smoke-level
+      load, dependency audit, SBOM, and container builds exist.
+    - No browser E2E suite covers login, scope creation, multi-profile scans,
       KEV sync, Guard inspection, and failure states.
-    - Migration tests, load/performance tests, security tests, dependency and
-      container scanning, SBOM, and a restore test in CI.
-    - Accessibility and cross-browser checks for the operator console.
+    - Accessibility and cross-browser checks remain open.
 
-11. **Release engineering**
-    - CI/CD with signed artifacts, branch protection, changelog, semantic
-      versioning, staged rollout, and a rollback gate.
-    - Environment configuration validation and a production configuration
-      checklist.
+11. **Release engineering** — **implemented, not exercised**
+    - CI, CodeQL, dependency audit, SBOM, signed-release workflow, ruleset
+      template, semver/changelog policy, and a staged-rollout/rollback runbook
+      exist.
+    - No git remote is configured, so branch protection and the release
+      workflow have not run. No signed release exists.
 
 ### P2 — product and commercial readiness
 
@@ -143,7 +168,7 @@ not missing UI or missing core logic.
 | Target | Estimate | Main work |
 |---|---|---|
 | Demo / pilot build | **2–3 working days** | Restart/verify the demo, close packaging and configuration gaps, add the multi-profile flow, run the acceptance script |
-| Single-tenant production | **10–15 working days** | PostgreSQL live path, SSO/MFA, deployment hardening, backups, observability, E2E and security gates |
+| Single-tenant production | **5-8 working days** | Real VPS/Supabase deployment, OIDC against a live IdP, egress proof, browser E2E, signed release, and the Phase 18 gate |
 | Multi-tenant SaaS | **4–6 weeks** | Tenant data plane, isolation, onboarding, billing/support, compliance and scale testing |
 
 These estimates assume one experienced full-stack/DevOps engineer and no
@@ -166,6 +191,21 @@ commitment.
   reconciliation, audit verification, backup/restore, and rollback.
 - The demo-only claims remain clearly labeled; no fixture result is presented as
   a live measurement.
+
+Current evidence for the local, pre-deployment baseline:
+
+- `tasks/evidence/postgres-backup-restore.json` - encrypted backup and
+  destructive restore drill.
+- `tasks/evidence/migration-rollback.json` - migration apply/rollback drill.
+- `tasks/evidence/guard-evaluation.json` - deterministic Guard detector
+  evaluation.
+- `tasks/evidence/security-smoke.json` and `tasks/evidence/load-test.json` -
+  runtime boundary and smoke-load checks.
+- `tasks/evidence/sbom-python.json`, `tasks/evidence/sbom-frontend.json` -
+  dependency SBOMs.
+
+These do not prove a production deployment. The Phase 18 gate requires a real
+deployment and human signoff.
 
 ## 6. Deliberate safety boundary
 

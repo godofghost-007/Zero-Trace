@@ -1,0 +1,30 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    service: zerotrace
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: zerotrace-bff
+    metrics_path: /api/v1/metrics
+    bearer_token_file: /etc/prometheus/metrics-token
+    static_configs:
+      - targets: ["engine:3000"]
+
+  - job_name: zerotrace-engine
+    metrics_path: /api/v1/engine/metrics
+    bearer_token_file: /etc/prometheus/metrics-token
+    static_configs:
+      - targets: ["engine:3000"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

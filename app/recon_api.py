@@ -24,7 +24,9 @@ from .recon import (
     profile_requires_authorization,
 )
 from .recon_authorization import AuthorizationRegistry, AuthorizationVerificationError
+from .scan_schedule import ScanScheduleRegistry
 from .security import AuthorizationError, Principal, require_role
+from .target_policy import TargetPolicy, TargetPolicyError
 
 LOGGER = logging.getLogger("zerotrace.recon_api")
 TERMINAL_STATES = {
@@ -90,6 +92,15 @@ class AuthorizationVerifyRequest(BaseModel):
     profileIds: tuple[str, ...] = Field(min_length=1, max_length=4)
 
 
+class ScheduleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scopeId: str = Field(min_length=1, max_length=128)
+    target: str = Field(min_length=1, max_length=253)
+    profileId: str = Field(min_length=1, max_length=64)
+    intervalSeconds: int = Field(ge=300, le=604800)
+
+
 @dataclass
 class _QueuedScan:
     scan_id: str
@@ -111,6 +122,7 @@ class ReconQueue:
         on_scan_complete: Callable[[_QueuedScan], None] | None = None,
         max_queue_depth: int = 50,
         target_cooldown_seconds: float = 0,
+        target_policy: TargetPolicy | None = None,
     ) -> None:
         if max_queue_depth < 1:
             raise ReconError("queue depth must be positive")
@@ -118,6 +130,7 @@ class ReconQueue:
             raise ReconError("target cooldown must be non-negative")
         self.engine = engine
         self.repository = repository
+        self.target_policy = target_policy or TargetPolicy()
         self._scopes: dict[str, Scope] = {}
         self._scope_authorizations: dict[str, str] = {}
         self.authorization_registry = authorization_registry
@@ -139,6 +152,12 @@ class ReconQueue:
         if self.persistence is not None:
             self.persistence.save_scope(scope)
 
+    def _check_target_policy(self, value: str) -> None:
+        try:
+            self.target_policy.check(value)
+        except TargetPolicyError as error:
+            raise ReconError(str(error)) from error
+
     def enqueue(
         self,
         scope: Scope,
@@ -146,6 +165,7 @@ class ReconQueue:
         profile_id: str,
         idempotency_key: str | None,
     ) -> _QueuedScan:
+        self._check_target_policy(target.value)
         request_fingerprint = f"{scope.scope_id}:{target.value}:{profile_id}"
         with self._lock:
             if idempotency_key is not None:
@@ -347,6 +367,7 @@ def create_recon_app(
     queue: ReconQueue,
     principal_provider: Callable[[Request], Principal | None],
     read_repository: object | None = None,
+    schedule_registry: ScanScheduleRegistry | None = None,
 ) -> FastAPI:
     app = FastAPI()
 
@@ -405,6 +426,8 @@ def create_recon_app(
         ]
         if unknown:
             raise ReconError("profile is not allowlisted")
+        for target in payload.targets:
+            queue._check_target_policy(target)
         requires_authorization = payload.environment == "isolated_lab" or any(
             profile_requires_authorization(profile_id)
             for profile_id in payload.profiles
@@ -566,6 +589,53 @@ def create_recon_app(
             raise AuthorizationError("Authorization denied", 403)
         cancelled = queue.cancel(scan_id)
         return {"scanId": scan_id, "state": cancelled.state}
+
+    @app.get("/api/v1/recon/schedules")
+    async def list_schedules(request: Request) -> dict[str, object]:
+        actor = principal(request, "viewer")
+        if schedule_registry is None:
+            return {"items": [], "enabled": False}
+        return {
+            "items": [
+                schedule.view()
+                for schedule in schedule_registry.list(actor.subject)
+            ],
+            "enabled": True,
+        }
+
+    @app.post("/api/v1/recon/schedules", status_code=201)
+    async def create_schedule(
+        request: Request, payload: ScheduleRequest
+    ) -> dict[str, object]:
+        actor = principal(request, "operator")
+        if schedule_registry is None:
+            raise HTTPException(status_code=503, detail="schedules unavailable")
+        schedule = schedule_registry.create(
+            owner_id=actor.subject,
+            scope_id=payload.scopeId,
+            target=payload.target,
+            profile_id=payload.profileId,
+            interval_seconds=payload.intervalSeconds,
+        )
+        return schedule.view()
+
+    @app.post("/api/v1/recon/schedules/{schedule_id}/run")
+    async def run_schedule(
+        request: Request, schedule_id: str
+    ) -> dict[str, object]:
+        actor = principal(request, "operator")
+        if schedule_registry is None:
+            raise HTTPException(status_code=503, detail="schedules unavailable")
+        return schedule_registry.run_now(schedule_id, actor.subject)
+
+    @app.delete("/api/v1/recon/schedules/{schedule_id}")
+    async def disable_schedule(
+        request: Request, schedule_id: str
+    ) -> dict[str, object]:
+        actor = principal(request, "operator")
+        if schedule_registry is None:
+            raise HTTPException(status_code=503, detail="schedules unavailable")
+        return schedule_registry.disable(schedule_id, actor.subject).view()
 
     @app.get("/api/v1/assets")
     async def list_assets(request: Request) -> dict[str, list[str]]:

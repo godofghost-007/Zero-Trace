@@ -1,4 +1,4 @@
-# Phase 17B evidence — deployment and bounded scanning
+# Phase 17B evidence - deployment and bounded scanning
 
 Date: 2026-10-25
 
@@ -9,7 +9,8 @@ Date: 2026-10-25
 - `Dockerfile.engine`: Python 3.13, Nmap, pinned Subfinder release, non-root,
   healthcheck, loopback bind.
 - `deploy/Caddyfile`: automatic TLS, HSTS and security headers, 1 MB request
-  body limit, JSON access logs, reverse proxy to the BFF.
+  body limit, JSON access logs, reverse proxy to the BFF, and per-client edge
+  rate limits for `/api/v1/auth/*` (10/min) and `/api/v1/*` (300/min).
 - `deploy/compose.prod.yaml`: Caddy + BFF + engine, no published engine port,
   resource limits, `cap_drop: ALL`, `no-new-privileges`, healthchecks, named
   volumes.
@@ -30,8 +31,18 @@ docker build -t zerotrace-bff:ci frontend
 docker run ... zerotrace-engine:ci   # /health -> {"status":"healthy"}
 docker run ... zerotrace-bff:ci      # /api/v1/health -> 200
 docker run --rm ... caddy:2.10-alpine caddy validate
+# Valid configuration (stock image)
+docker build -f deploy/Dockerfile.caddy -t zerotrace-caddy:ci deploy
+docker run --rm -e ZEROTRACE_DOMAIN=zerotrace.example.test \
+  -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+  zerotrace-caddy:ci caddy validate --config /etc/caddy/Caddyfile
 # Valid configuration
+# Rate-limit test with a 2-request zone: request 1 -> 200, request 2 -> 200,
+# request 3 -> 429.
 ```
+
+Evidence: `tasks/evidence/observability-config.json` includes the Caddy
+validation and rate-limit result.
 
 The engine health check was executed inside the container because the process
 intentionally binds `127.0.0.1`, not the host-published interface. The BFF image
@@ -41,11 +52,15 @@ schema bootstrap now tolerates concurrent `CREATE TABLE` races and returned
 
 ## Known gaps
 
-- Caddy edge rate limiting is not configured; the BFF and engine retain their
-  application-level limits. A Caddy rate-limit module or provider WAF is needed
-  for edge protection.
+- Caddy edge rate limiting is configured with a pinned custom image
+  (`deploy/Dockerfile.caddy`) and validated with a local two-request limit test.
+  It keys on the direct peer address; Cloudflare proxying needs trusted-proxy
+  configuration or it will key on Cloudflare's address.
 - The production stack has not been deployed to a real VPS/Supabase project in
   this phase.
-- Scanner runtime version gating and sandbox proof are pending (P17C2).
-- Rollback was implemented and tested for migrations, but not rehearsed against
-  a live production deployment.
+- Scanner runtime version gating and container hardening were completed in
+  P17C2; there is still no per-scan network namespace or separate filesystem
+  jail.
+- Migration rollback was exercised locally in
+  `tasks/evidence/migration-rollback.json`, but not against a live production
+  deployment.

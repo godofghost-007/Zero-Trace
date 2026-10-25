@@ -1,4 +1,6 @@
-from flask import Blueprint, current_app, g, jsonify, request
+import hmac
+
+from flask import Blueprint, Response, current_app, g, jsonify, request
 from sqlalchemy import text
 
 from .extensions import db
@@ -29,6 +31,33 @@ def ready():
         db_state = "unavailable"
     payload = {"ready": db_state == "connected", "database": db_state, "event_bus": bus_status()}
     return jsonify(payload), (200 if payload["ready"] else 503)
+
+
+@api.get("/metrics")
+def metrics():
+    """Prometheus scrape endpoint, disabled unless explicitly enabled.
+
+    When a token is configured, the scraper must send
+    ``Authorization: Bearer <token>``. The endpoint is in the public auth list
+    only so Prometheus does not need an interactive session; the token check is
+    the authorization boundary.
+    """
+
+    if not current_app.config.get("METRICS_ENABLED", False):
+        return _error("metrics_disabled", "Metrics are not enabled.", 404)
+    token = str(current_app.config.get("METRICS_TOKEN", "")).strip()
+    if token:
+        supplied = request.headers.get("Authorization", "")
+        if not hmac.compare_digest(supplied, f"Bearer {token}"):
+            return _error("metrics_unauthorized", "A metrics token is required.", 401)
+    registry = current_app.extensions.get("metrics")
+    if registry is None:
+        return _error("metrics_unavailable", "Metrics are not initialized.", 503)
+    return Response(
+        registry.render(),
+        mimetype="text/plain",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @api.get("/demo/state")

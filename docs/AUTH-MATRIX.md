@@ -26,6 +26,8 @@ lower-role permissions.
 | Ingest Intel feeds | no | yes | yes | Allowlisted endpoints only. |
 | Inspect Guard events | yes | yes | yes | Read-only status and counters. |
 | Submit Guard inspection | no | yes | yes | Bounded inspection only; no automatic remediation. |
+| Send chat through Guard | no | yes | yes | BFF adds the Guard credential; no client-supplied upstream or streaming. |
+| Read or mutate another user's scopes/scans | no | no | no | The BFF forwards the authenticated subject and role to the loopback engine, so owner checks are per user, not a shared service identity. |
 | Create remediation proposal | no | yes | yes | Proposal remains review-required and non-executing. |
 | Manage users/roles | no | no | yes | Tenant-scoped; last active admin is protected. |
 | Issue password reset token | no | no | yes | Token is returned once; deliver out of band. |
@@ -56,4 +58,6 @@ lower-role permissions.
    all existing sessions when used.
 9. The last active admin in a tenant cannot be disabled or demoted.
 10. Production startup fails if the secret key, PostgreSQL URL, secure cookies,
-    MFA encryption key, or OIDC credentials are unsafe/missing.
+    MFA encryption key, OIDC credentials, an enabled Guard proxy
+    credential/loopback URL, or a metrics token for enabled metrics are
+    unsafe/missing.

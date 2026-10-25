@@ -6,8 +6,8 @@ ZeroTrace is a local-first cyber-defense demo with three cooperating modules:
 - **Trace Intel** — normalized vulnerability facts, CISA KEV/EPSS signals,
   service correlation, and explainable prioritization.
 - **Trace Guard** - prompt-injection and PII inspection for LLM traffic. The
-  default is inspect-only; an explicitly configured OpenAI-compatible upstream
-  gateway is available behind the Guard trust boundary.
+  default is inspect-only; an explicitly configured loopback gateway and an
+  authenticated BFF chat route are available behind the Guard trust boundary.
 
 The operator-facing dashboard is a React single-page application served by a
 Flask backend-for-frontend (BFF). The BFF talks to the real Python modules
@@ -27,12 +27,13 @@ live engine for the Targets & Scope console.
 | Dashboard | React/Vite pages for Architecture, Database & Events, Recon, Intel, Guard, Targets & Scope, and Engine Settings |
 | Recon | Allowlisted synthetic, TLS-metadata, Nmap, Subfinder, and read-only S3 adapters; approved scopes; rate limits; retries; normalized inventory |
 | Intel | NVD/EPSS/CISA KEV parsing, service correlation, confidence/freshness, priority formula, persisted facts |
-| Guard | Prompt-injection and PII inspection, audit metadata, bounded request handling; inspect-only by default, optional allowlisted upstream |
+| Guard | Prompt-injection and PII inspection, block/redact policy, strict upstream allowlist, model allowlist, key rotation, authenticated BFF chat route, audit metadata; inspect-only by default, optional loopback proxy |
 | Readiness | AEI/VUI/AIET components, explicit unknown inputs, persisted snapshots |
 | Live console | Server-side engine key, loopback-only engine URL, explicit operator authorization, durable demo state |
 | Auth | Local login, opaque DB-backed sessions, per-session CSRF, TOTP MFA, optional OIDC, password reset, session inventory, ordered viewer/operator/admin roles, CLI account management |
 | Intel schedule | Background NVD/EPSS/KEV runs through the same bounded ingestion path, persisted last-run status, KEV exposed in the UI |
-| Recovery | SHA-256-manifested SQLite and PostgreSQL backup, verification, and restore with pre-restore copies |
+| Recovery | Fernet-encrypted SQLite/PostgreSQL backup, inner/outer SHA-256 manifests, verification, retention, off-host copy, and destructive restore drill |
+| Observability | In-process metrics, JSON logs, request IDs, trace propagation, Prometheus rules, Alertmanager, Grafana dashboard, SLOs, and runbooks |
 | Persistence | PostgreSQL migrations for the production path; SQLite for the self-contained live-engine demo |
 | Tests | Python, BFF, and frontend suites plus type-check, build, Compose validation, and a disposable PostgreSQL smoke test |
 
@@ -221,10 +222,16 @@ Set-Location ..
 # Phase 16 scheduled feed run (requires the live engine)
 .\.venv\Scripts\python.exe -m scripts.feed_run --source kev
 
-# Phase 16 backup and restore
-Set-Location frontend
-..\.venv\Scripts\python.exe -m flask --app backend:create_app backup-db --output ..\backups\bff-demo.sqlite3
-..\.venv\Scripts\python.exe -m flask --app backend:create_app verify-db-backup ..\backups\bff-demo.sqlite3
+# Encrypted backup and restore (see docs/BACKUP-RESTORE.md)
+.\.venv\Scripts\python.exe -m scripts.backup_database generate-key
+.\.venv\Scripts\python.exe -m scripts.backup_database backup-sqlite `
+  --source data/live-engine.sqlite3 --output backups/live.ztb
+.\.venv\Scripts\python.exe -m scripts.backup_database verify --backup backups/live.ztb
+
+# Guard evaluation, runtime security, and smoke load
+.\.venv\Scripts\python.exe -m scripts.evaluate_guard
+frontend\.venv\Scripts\python.exe -m scripts.security_smoke
+frontend\.venv\Scripts\python.exe -m scripts.load_test --requests 100 --concurrency 10 --fail
 
 # Compose syntax
 Set-Location ..
@@ -251,11 +258,18 @@ and backup/restore gaps. Evidence is
 [tasks/evidence/phase-16.md](tasks/evidence/phase-16.md); human signoff is
 pending.
 
+Phase 17C-17F evidence is in
+[tasks/evidence/phase-17c.md](tasks/evidence/phase-17c.md),
+[tasks/evidence/phase-17d.md](tasks/evidence/phase-17d.md),
+[tasks/evidence/phase-17e.md](tasks/evidence/phase-17e.md), and
+[tasks/evidence/phase-17f.md](tasks/evidence/phase-17f.md).
+
 For a presenter-oriented walkthrough, exact demo commands, Nmap/Subfinder
 profiles, and the remaining-gap scorecard, see
 [docs/DEMO-GUIDE.md](docs/DEMO-GUIDE.md). For the production gap review and
 delivery estimate, see
-[docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md).
+[docs/PRODUCTION-READINESS.md](docs/PRODUCTION-READINESS.md). The release stop
+conditions are in [docs/PHASE-18-GATE.md](docs/PHASE-18-GATE.md).
 
 ## Repository layout
 
@@ -286,13 +300,19 @@ compose.lab.yaml         Loopback-only isolated lab containers
 - The SQLite live store is demo infrastructure; PostgreSQL is the production
   persistence path. The host-port PostgreSQL path was intermittent during
   Docker Desktop checkpoints; the recorded smoke test uses the Compose network.
-- Backups are local and unencrypted; there is no offsite copy or retention
-  policy. Production must add encrypted offsite backup and restore rehearsal.
-- Performance and remediation are measured/proposed, not automatically
-  executed in production. The full 9 GB model profile is unproven.
+- Encrypted backups, retention, and a destructive restore drill exist, but the
+  drill used local Docker PostgreSQL. Off-host copy used a local directory, not
+  rclone/S3, and no production VPS/Supabase restore has been performed.
+- Observability assets are validated, but the overlay has not run against a
+  production stack. The shipped Alertmanager receiver is null.
+- The Guard detector is regex-based and English-only; its 40-case corpus is
+  regression evidence, not a security guarantee. No live provider call was made.
 - The Guard upstream gateway and OIDC callback are implemented but have not been
   exercised against every provider. NVIDIA's free API is best-effort capacity,
-  not a production SLA.
+  not a production SLA. The external detector and Intel model slots are
+  reserved, not wired in this release.
+- Caddy edge rate limiting is configured and validated locally, but egress
+  allowlist enforcement is not configured.
 - The self-hosted release gate (Phase 18) and human signoff are still required
   before calling this production-ready.
 

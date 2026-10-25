@@ -62,6 +62,7 @@ def test_live_runtime_migration_rolls_back_and_reapplies():
                 ("0007_live_runtime",),
             ).fetchone()[0] == 1
 
+        assert rollback_latest(target_url) == "0009_scan_schedules"
         assert rollback_latest(target_url) == "0008_identity_hardening"
         assert rollback_latest(target_url) == "0007_live_runtime"
 

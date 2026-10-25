@@ -61,6 +61,11 @@ from app.intel_feeds import (  # noqa: E402
 from app.intel_scheduler import IntelScheduler  # noqa: E402
 from app.live_store import LiveStore  # noqa: E402
 from app.live_store_pg import PostgresLiveStore  # noqa: E402
+from app.observability import (  # noqa: E402
+    MetricsRegistry,
+    configure_json_logging,
+    install_fastapi_observability,
+)
 from app.recon import (  # noqa: E402
     AdapterResult,
     InMemoryReconRepository,
@@ -79,13 +84,17 @@ from app.recon_authorization import (  # noqa: E402
     AuthorizationRegistry,
     SystemDnsTxtResolver,
 )
+from app.scan_schedule import ScanScheduleRegistry  # noqa: E402
+from app.scanner_versions import default_requirements  # noqa: E402
 from app.security import (  # noqa: E402
     AuthConfig,
     AuthorizationError,
     Principal,
+    ROLE_RANK,
     require_role,
     verify_api_key,
 )
+from app.target_policy import TargetPolicy  # noqa: E402
 
 LOGGER = logging.getLogger("zerotrace.live_engine")
 DEFAULT_API_KEY = "sk-zerotrace-local-engine-7f3c9a2b"
@@ -292,6 +301,12 @@ class EngineSettings:
     scan_target_cooldown_seconds: float = 2.0
     scan_max_concurrent_runs: int = 1
     scan_max_retries: int = 0
+    target_allowlist: tuple[str, ...] = ()
+    target_denylist: tuple[str, ...] = ()
+    nmap_min_version: str = "7.80"
+    nmap_expected_version: str | None = None
+    subfinder_min_version: str = "2.6.0"
+    subfinder_expected_version: str | None = None
     intel_schedule_enabled: bool = True
     intel_initial_delay_seconds: int = 300
     nvd_interval_seconds: int = 6 * 60 * 60
@@ -328,10 +343,20 @@ class EngineSettings:
             raise ValueError("scan concurrency must be positive")
         if self.scan_max_retries < 0:
             raise ValueError("scan retries must be non-negative")
+        # Constructing these objects validates the configured domains and
+        # scanner version strings before the process starts serving traffic.
+        TargetPolicy(self.target_allowlist, self.target_denylist)
+        default_requirements(
+            nmap_minimum=self.nmap_min_version,
+            nmap_expected=self.nmap_expected_version,
+            subfinder_minimum=self.subfinder_min_version,
+            subfinder_expected=self.subfinder_expected_version,
+        )
 
     @classmethod
     def from_env(cls) -> "EngineSettings":
         api_key = os.environ.get("ZEROTRACE_ENGINE_API_KEY", DEFAULT_API_KEY)
+        target_policy = TargetPolicy.from_env()
         raw_secret = os.environ.get("ZEROTRACE_ENGINE_AUTH_SECRET", "").encode()
         secret = raw_secret or hashlib.sha256(
             b"zerotrace-local-engine:" + api_key.encode("utf-8")
@@ -377,6 +402,20 @@ class EngineSettings:
             scan_target_cooldown_seconds=target_cooldown,
             scan_max_concurrent_runs=scan_concurrency,
             scan_max_retries=scan_retries,
+            target_allowlist=target_policy.allowlist,
+            target_denylist=target_policy.denylist,
+            nmap_min_version=os.environ.get("ZEROTRACE_NMAP_MIN_VERSION", "7.80"),
+            nmap_expected_version=(
+                os.environ.get("ZEROTRACE_NMAP_EXPECTED_VERSION", "").strip()
+                or None
+            ),
+            subfinder_min_version=os.environ.get(
+                "ZEROTRACE_SUBFINDER_MIN_VERSION", "2.6.0"
+            ),
+            subfinder_expected_version=(
+                os.environ.get("ZEROTRACE_SUBFINDER_EXPECTED_VERSION", "").strip()
+                or None
+            ),
             intel_schedule_enabled=os.environ.get(
                 "ZEROTRACE_INTEL_SCHEDULE_ENABLED", "true"
             ).lower() == "true",
@@ -440,15 +479,25 @@ def _tool_version(executable: str | None) -> str | None:
     return output.splitlines()[0][:200]
 
 
-def _scanner_inventory() -> dict[str, dict[str, object]]:
+def _scanner_inventory(
+    settings: EngineSettings | None = None,
+) -> dict[str, dict[str, object]]:
+    settings = settings or EngineSettings.from_env()
+    requirements = default_requirements(
+        nmap_minimum=settings.nmap_min_version,
+        nmap_expected=settings.nmap_expected_version,
+        subfinder_minimum=settings.subfinder_min_version,
+        subfinder_expected=settings.subfinder_expected_version,
+    )
     inventory: dict[str, dict[str, object]] = {}
-    for name in ("nmap", "subfinder"):
+    for name, requirement in requirements.items():
         executable = shutil.which(name)
-        inventory[name] = {
-            "available": bool(executable),
-            "path": executable,
-            "version": _tool_version(executable),
-        }
+        output = _tool_version(executable)
+        details = requirement.evaluate(
+            available=bool(executable), version_output=output
+        )
+        details["path"] = executable
+        inventory[name] = details
     return inventory
 
 
@@ -464,7 +513,7 @@ def create_live_engine(
 ) -> FastAPI:
     repository = InMemoryReconRepository()
     adapters = _configured_adapters(settings)
-    scanner_inventory = _scanner_inventory()
+    scanner_inventory = _scanner_inventory(settings)
     engine = ReconEngine(
         repository,
         adapters,
@@ -512,7 +561,15 @@ def create_live_engine(
         initial_delay_seconds=settings.intel_initial_delay_seconds,
     )
 
+    metrics = MetricsRegistry()
+
     def scan_completed(job: object) -> None:
+        state = str(getattr(job, "state", "unknown"))
+        profile_id = str(getattr(job, "profile_id", "unknown"))
+        metrics.inc(
+            "zerotrace_scans_completed_total",
+            labels={"profile": profile_id, "state": state},
+        )
         _sync_scan_services(queue, intel_repository)
         intel_repository.notify_change()
 
@@ -527,6 +584,16 @@ def create_live_engine(
         on_scan_complete=scan_completed,
         max_queue_depth=settings.scan_max_queue_depth,
         target_cooldown_seconds=settings.scan_target_cooldown_seconds,
+        target_policy=TargetPolicy(
+            settings.target_allowlist, settings.target_denylist
+        ),
+    )
+    schedule_registry = ScanScheduleRegistry(
+        queue,
+        persistence=store,
+        target_policy=TargetPolicy(
+            settings.target_allowlist, settings.target_denylist
+        ),
     )
     _sync_scan_services(queue, intel_repository)
     persist_intel()
@@ -538,6 +605,16 @@ def create_live_engine(
         provided = request.headers.get("X-API-Key", "")
         if not verify_api_key(provided, expected_digest, auth_config):
             return None
+        subject = request.headers.get("X-ZeroTrace-Subject", "").strip()
+        role = request.headers.get("X-ZeroTrace-Role", "").strip()
+        if (
+            subject
+            and len(subject) <= 255
+            and subject.isprintable()
+            and not any(character.isspace() for character in subject)
+            and role in ROLE_RANK
+        ):
+            return Principal(subject, role)
         return Principal("local-operator", "operator")
 
     def actor(request: Request, role: str) -> Principal:
@@ -553,12 +630,51 @@ def create_live_engine(
                 LOGGER.exception("recon worker iteration failed")
             stop_worker.wait(0.5)
 
+    def schedule_worker() -> None:
+        while not stop_worker.is_set():
+            try:
+                results = schedule_registry.run_due()
+                for result in results:
+                    metrics.inc(
+                        "zerotrace_scheduled_scans_total",
+                        labels={"state": str(result.get("state", "unknown"))},
+                    )
+                feeds = intel_scheduler.status().get("feeds", {})
+                if isinstance(feeds, dict):
+                    now = datetime.now(timezone.utc)
+                    for source, feed in feeds.items():
+                        if not isinstance(feed, dict):
+                            continue
+                        completed = feed.get("lastCompleted")
+                        if not isinstance(completed, str):
+                            continue
+                        try:
+                            age = (
+                                now - datetime.fromisoformat(completed)
+                            ).total_seconds()
+                        except ValueError:
+                            continue
+                        metrics.set_gauge(
+                            "zerotrace_intel_feed_age_seconds",
+                            max(0.0, age),
+                            labels={"feed": source},
+                        )
+            except Exception:  # pragma: no cover - keep scheduler alive
+                LOGGER.exception("scan schedule iteration failed")
+            stop_worker.wait(5.0)
+
     @asynccontextmanager
     async def lifespan(application: FastAPI):
         thread = threading.Thread(
             target=scan_worker, name="zerotrace-recon-worker", daemon=True
         )
         thread.start()
+        schedule_thread = threading.Thread(
+            target=schedule_worker,
+            name="zerotrace-schedule-worker",
+            daemon=True,
+        )
+        schedule_thread.start()
         intel_scheduler.start()
         try:
             yield
@@ -566,13 +682,19 @@ def create_live_engine(
             intel_scheduler.stop()
             stop_worker.set()
             thread.join(timeout=5)
+            schedule_thread.join(timeout=5)
             close = getattr(store, "close", None)
             if callable(close):
                 close()
 
     app = FastAPI(title="ZeroTrace live engine", lifespan=lifespan)
+    install_fastapi_observability(app, service="engine", registry=metrics)
 
-    recon_app = create_recon_app(queue, principal_provider)
+    recon_app = create_recon_app(
+        queue,
+        principal_provider,
+        schedule_registry=schedule_registry,
+    )
     intel_app = create_intel_app(intel_repository, principal_provider, transport)
     app.router.routes.extend(recon_app.routes)
     app.router.routes.extend(intel_app.routes)
@@ -627,20 +749,25 @@ def create_live_engine(
     @app.get("/ready")
     async def ready() -> dict[str, object]:
         storage_ok = store.ping()
+        scanners_ok = all(
+            bool(details["compatible"])
+            for details in scanner_inventory.values()
+        )
         return {
-            "status": "ready" if storage_ok else "degraded",
+            "status": "ready" if storage_ok and scanners_ok else "degraded",
             "checks": {
-                "recon": "ok",
+                "recon": "ok" if scanners_ok else "degraded",
                 "intel": "ok",
                 "guard": "ok",
                 "storage": "ok" if storage_ok else "degraded",
                 "scanners": {
-                    name: (
-                        "available" if details["available"] else "unavailable"
-                    )
+                    name: str(details["status"])
                     for name, details in scanner_inventory.items()
                 },
                 "worker": "stopped" if stop_worker.is_set() else "running",
+                "scheduleWorker": (
+                    "stopped" if stop_worker.is_set() else "running"
+                ),
                 "intelScheduler": (
                     "disabled"
                     if not settings.intel_schedule_enabled
@@ -688,9 +815,28 @@ def create_live_engine(
                 {profile.adapter_name for profile in available_profiles.values()}
             ),
             "scanners": scanner_inventory,
+            "scannerCompatibility": (
+                "ok"
+                if all(
+                    bool(details["compatible"])
+                    for details in scanner_inventory.values()
+                )
+                else "degraded"
+            ),
+            "targetPolicy": TargetPolicy(
+                settings.target_allowlist, settings.target_denylist
+            ).summary(),
             "profiles": sorted(available_profiles),
             "scopes": len(scopes),
             "scans": len(jobs),
+            "scheduledScans": {
+                "total": len(schedule_registry.list(current.subject)),
+                "enabled": sum(
+                    1
+                    for schedule in schedule_registry.list(current.subject)
+                    if schedule.enabled
+                ),
+            },
             "intel": {
                 "facts": len(intel_repository.facts),
                 "findings": len(intel_repository.findings),
@@ -769,6 +915,13 @@ def create_live_engine(
             reason=prompt.reason,
             pii_blocked=pii.blocked,
         )
+        metrics.inc(
+            "zerotrace_guard_inspections_total",
+            labels={
+                "blocked": str(prompt.blocked).lower(),
+                "reason": prompt.reason or "none",
+            },
+        )
         return {
             "blocked": prompt.blocked,
             "reason": prompt.reason,
@@ -784,9 +937,10 @@ def create_live_engine(
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=os.environ.get("ZEROTRACE_LOG_LEVEL", "INFO").upper(),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    configure_json_logging(
+        os.environ.get("ZEROTRACE_LOG_LEVEL", "INFO"),
+        json_format=os.environ.get("ZEROTRACE_LOG_FORMAT", "text").lower()
+        == "json",
     )
     settings = EngineSettings.from_env()
     LOGGER.info("starting live engine on %s:%s", settings.host, settings.port)

@@ -423,5 +423,138 @@ class EventEmissionTests(unittest.TestCase):
         self.assertGreaterEqual(len(attack_events), 1)
 
 
+class GuardHardeningTests(unittest.TestCase):
+    def _app(self, **config_overrides):
+        config = GuardConfig(
+            api_key_secret=TEST_SECRET,
+            api_key_digest=TEST_DIGEST,
+            upstream_allowlist=("https://api.openai.com",),
+            **config_overrides,
+        )
+        transport = SyntheticGuardTransport(
+            responses={
+                "https://api.openai.com/v1/chat/completions": json.dumps(
+                    {
+                        "id": "chatcmpl-pii",
+                        "object": "chat.completion",
+                        "created": 1234567890,
+                        "model": "gpt-3.5-turbo",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "Contact user@example.com for help.",
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {
+                            "prompt_tokens": 2,
+                            "completion_tokens": 1,
+                            "total_tokens": 3,
+                        },
+                    }
+                ).encode(),
+            },
+        )
+        app = create_guard_app(
+            config=config,
+            transport=transport,
+            principal_provider=principal_provider("viewer"),
+        )
+        return TestClient(app), transport
+
+    def test_previous_key_is_accepted_during_rotation(self) -> None:
+        previous_key = "previous-bff-key-0123456789"
+        previous_digest = _make_digest(TEST_SECRET, previous_key)
+        client, _transport = self._app(
+            previous_api_key_digest=previous_digest, pii_action="redact"
+        )
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            headers={"X-API-Key": previous_key},
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_model_allowlist_rejects_unknown_model(self) -> None:
+        client, _transport = self._app(allowed_models=("gpt-3.5-turbo",))
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "some-other-model",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            headers={"X-API-Key": TEST_API_KEY},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["error"]["code"], "model is not allowlisted")
+
+    def test_pii_response_is_blocked_by_default(self) -> None:
+        client, _transport = self._app()
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            headers={"X-API-Key": TEST_API_KEY},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "pii_detected")
+
+    def test_pii_response_can_be_redacted(self) -> None:
+        client, _transport = self._app(pii_action="redact")
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+            headers={"X-API-Key": TEST_API_KEY},
+        )
+        self.assertEqual(response.status_code, 200)
+        content = response.json()["choices"][0]["message"]["content"]
+        self.assertNotIn("user@example.com", content)
+        self.assertIn("[REDACTED:EMAIL]", content)
+        self.assertEqual(response.headers["X-ZeroTrace-PII-Redacted"], "true")
+
+    def test_upstream_allowlist_rejects_ambiguous_urls(self) -> None:
+        from app.guard import _is_allowlisted_upstream
+
+        allowlist = ("https://api.openai.com",)
+        self.assertTrue(
+            _is_allowlisted_upstream("https://api.openai.com", allowlist)
+        )
+        self.assertTrue(
+            _is_allowlisted_upstream("https://api.openai.com:443/", allowlist)
+        )
+        for candidate in (
+            "https://api.openai.com@evil.example",
+            "https://api.openai.com.evil.example",
+            "https://sub.api.openai.com",
+            "https://api.openai.com/v1",
+            "https://api.openai.com:8443",
+            "http://api.openai.com",
+        ):
+            self.assertFalse(
+                _is_allowlisted_upstream(candidate, allowlist), candidate
+            )
+        self.assertTrue(
+            _is_allowlisted_upstream(
+                "https://sub.example.com", ("https://*.example.com",)
+            )
+        )
+        self.assertFalse(
+            _is_allowlisted_upstream(
+                "https://example.com", ("https://*.example.com",)
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

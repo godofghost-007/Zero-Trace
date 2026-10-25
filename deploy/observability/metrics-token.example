@@ -1,0 +1,3 @@
+# Copy to deploy/observability/metrics-token and restrict permissions.
+# This value must match ZEROTRACE_METRICS_TOKEN in .env.production.
+replace-with-a-long-random-metrics-token

@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "date": "2026-10-25",
+  "scope": "local container smoke; no provider call",
+  "image": "zerotrace-engine:ci",
+  "imageId": "sha256:2470e197725b6bd3456663db4efe776936fbbcc63f389e29b733d6e35f9955bf",
+  "command": "python -m scripts.guard_proxy",
+  "network": "none",
+  "bind": "127.0.0.1:8766",
+  "health": {
+    "url": "http://127.0.0.1:8766/health",
+    "status": "healthy"
+  },
+  "limitations": [
+    "No live NVIDIA or other upstream provider call was made.",
+    "The production Compose stack was configuration-validated, not started."
+  ]
+}

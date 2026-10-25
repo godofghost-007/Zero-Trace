@@ -34,6 +34,7 @@ from .live_store import (
     uncertain_to_dict,
 )
 from .recon import Scope
+from .scan_schedule import ScanSchedule
 
 
 def _json(value: object) -> Jsonb:
@@ -235,6 +236,79 @@ class PostgresLiveStore:
             }
             for row in rows
         ]
+
+    # -- scheduled scans -----------------------------------------------
+    def save_scan_schedule(self, schedule: ScanSchedule) -> None:
+        with self._session() as connection:
+            connection.execute(
+                """
+                INSERT INTO live_scan_schedules
+                    (schedule_id, owner_id, scope_id, target, profile_id,
+                     interval_seconds, enabled, next_run_at, created_at,
+                     authorization_id, last_run_at, last_scan_id, last_state,
+                     last_error, runs)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (schedule_id) DO UPDATE SET
+                    enabled = EXCLUDED.enabled,
+                    next_run_at = EXCLUDED.next_run_at,
+                    authorization_id = EXCLUDED.authorization_id,
+                    last_run_at = EXCLUDED.last_run_at,
+                    last_scan_id = EXCLUDED.last_scan_id,
+                    last_state = EXCLUDED.last_state,
+                    last_error = EXCLUDED.last_error,
+                    runs = EXCLUDED.runs
+                """,
+                (
+                    schedule.schedule_id,
+                    schedule.owner_id,
+                    schedule.scope_id,
+                    schedule.target,
+                    schedule.profile_id,
+                    schedule.interval_seconds,
+                    schedule.enabled,
+                    schedule.next_run_at,
+                    schedule.created_at,
+                    schedule.authorization_id,
+                    schedule.last_run_at,
+                    schedule.last_scan_id,
+                    schedule.last_state,
+                    schedule.last_error,
+                    schedule.runs,
+                ),
+            )
+
+    def load_scan_schedules(self) -> list[ScanSchedule]:
+        with self._session() as connection:
+            rows = connection.execute(
+                "SELECT * FROM live_scan_schedules ORDER BY next_run_at"
+            ).fetchall()
+        return [
+            ScanSchedule(
+                schedule_id=str(row["schedule_id"]),
+                owner_id=str(row["owner_id"]),
+                scope_id=str(row["scope_id"]),
+                target=str(row["target"]),
+                profile_id=str(row["profile_id"]),
+                interval_seconds=int(row["interval_seconds"]),
+                enabled=bool(row["enabled"]),
+                next_run_at=row["next_run_at"],
+                created_at=row["created_at"],
+                authorization_id=row["authorization_id"],
+                last_run_at=row["last_run_at"],
+                last_scan_id=row["last_scan_id"],
+                last_state=row["last_state"],
+                last_error=row["last_error"],
+                runs=int(row["runs"]),
+            )
+            for row in rows
+        ]
+
+    def delete_scan_schedule(self, schedule_id: str) -> None:
+        with self._session() as connection:
+            connection.execute(
+                "DELETE FROM live_scan_schedules WHERE schedule_id = %s",
+                (schedule_id,),
+            )
 
     # -- intel ----------------------------------------------------------
     def save_intel_state(

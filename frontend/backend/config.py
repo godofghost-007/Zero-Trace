@@ -60,3 +60,17 @@ class Config:
         "ZEROTRACE_OIDC_REDIRECT_PATH", "/api/v1/auth/oidc/callback"
     )
     TRUST_PROXY = os.environ.get("ZEROTRACE_TRUST_PROXY", "false").lower() == "true"
+    LOG_LEVEL = os.environ.get("ZEROTRACE_LOG_LEVEL", "INFO")
+    LOG_FORMAT = os.environ.get("ZEROTRACE_LOG_FORMAT", "text").lower()
+    METRICS_ENABLED = os.environ.get("ZEROTRACE_METRICS_ENABLED", "false").lower() == "true"
+    METRICS_TOKEN = os.environ.get("ZEROTRACE_METRICS_TOKEN", "")
+    GUARD_PROXY_ENABLED = (
+        os.environ.get("ZEROTRACE_GUARD_PROXY_ENABLED", "false").lower() == "true"
+    )
+    GUARD_PROXY_URL = os.environ.get(
+        "ZEROTRACE_GUARD_PROXY_URL", "http://127.0.0.1:8766"
+    ).strip()
+    GUARD_BFF_API_KEY = os.environ.get("ZEROTRACE_GUARD_BFF_API_KEY", "")
+    GUARD_PROXY_TIMEOUT_SECONDS = float(
+        os.environ.get("ZEROTRACE_GUARD_PROXY_TIMEOUT_SECONDS", "30")
+    )

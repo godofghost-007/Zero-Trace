@@ -60,6 +60,8 @@ SESSION_COOKIE = "zt_session"
 PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/health"),
     ("GET", "/api/v1/ready"),
+    ("GET", "/api/v1/metrics"),
+    ("GET", "/api/v1/engine/metrics"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/password-reset"),
     ("GET", "/api/v1/auth/oidc/login"),

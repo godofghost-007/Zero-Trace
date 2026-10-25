@@ -1,0 +1,11 @@
+# Caddy with the pinned rate-limit module. The stock caddy image does not
+# include it, so production builds this small custom image instead of pulling a
+# mutable third-party image.
+FROM caddy:2.10-builder AS builder
+
+RUN xcaddy build v2.10.0 \
+    --with github.com/mholt/caddy-ratelimit@5625512f24f6f59d6f64fb3aafe5eecff0b286db
+
+FROM caddy:2.10-alpine
+
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

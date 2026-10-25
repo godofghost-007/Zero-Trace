@@ -1,0 +1,58 @@
+{
+  "kind": "postgresql-encrypted-backup-restore-drill",
+  "generatedAt": "2026-10-25T17:55:55Z",
+  "environment": {
+    "postgres": "postgres:16-alpine (Docker, frontend-postgres-1)",
+    "host": "local Windows developer workstation",
+    "database": "zerotrace",
+    "backupCli": "frontend/.venv/Scripts/python.exe -m scripts.backup_database"
+  },
+  "backup": {
+    "file": "backups/drill/postgres.ztb",
+    "outerFormat": "zerotrace-backup-v2",
+    "innerFormat": "zerotrace-backup-v1",
+    "encryption": "fernet",
+    "outerBytes": 87288,
+    "outerSha256": "906b9a1cdeba603a9b4ced7038c0f3c04ee58ab667700f9ec8078cef16bece22",
+    "innerBytes": 48823,
+    "innerSha256": "c55b6dae5a63edd157446147827a4847d993ada2d551887448941eaef6fb7755",
+    "offhostCopies": [
+      "backups/drill/offhost/postgres.ztb",
+      "backups/drill/offhost/postgres.ztb.manifest.json"
+    ],
+    "rcloneCopyTested": false
+  },
+  "drill": {
+    "steps": [
+      "Applied migrations 0001 through 0009 to a disposable PostgreSQL database.",
+      "Seeded one scope, one completed scan, and one schedule.",
+      "Created an encrypted custom-format pg_dump and copied it to an off-host directory.",
+      "Verified the outer manifest checksum and decrypted the inner manifest.",
+      "Dropped live_scans and live_scan_schedules and deleted the scope.",
+      "Restored the encrypted backup with pg_restore --clean --if-exists.",
+      "Re-ran a second restore after deleting the seed rows and measured elapsed time."
+    ],
+    "preRestoreBackupCreated": true,
+    "restoreSecondsObserved": 8.81,
+    "postRestoreCounts": {
+      "scopes": 1,
+      "scans": 1,
+      "schedules": 1
+    },
+    "restoredScanId": "drill-scan",
+    "result": "pass"
+  },
+  "objectives": {
+    "rpoTargetHours": 24,
+    "rtoTargetMinutes": 120,
+    "observedRtoMinutes": 0.15,
+    "notes": "The observed RTO is a local Docker restore, not a production VPS or Supabase restore. It excludes DNS, TLS, image pull, and operator decision time."
+  },
+  "limitations": [
+    "Local Docker PostgreSQL, not a production VPS or Supabase project.",
+    "Off-host copy used a local directory; rclone/S3 transfer was not exercised.",
+    "The backup key was stored on the same workstation for the drill; production requires it outside the backup host.",
+    "No point-in-time recovery or WAL archiving was tested.",
+    "The restore window is a single run, not a sustained recovery exercise."
+  ]
+}

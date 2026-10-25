@@ -6,23 +6,31 @@
 
 FROM python:3.13-slim AS runtime
 
+# Pin both scanner builds. The runtime gate in app/scanner_versions.py checks
+# the binaries that are actually present; a base-image or package drift makes
+# /ready report "degraded" instead of silently accepting a different scanner.
+ARG NMAP_VERSION=7.95+dfsg-3
+ARG SUBFINDER_VERSION=2.6.7
+ARG TARGETARCH=amd64
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     ZEROTRACE_ENGINE_HOST=127.0.0.1 \
     ZEROTRACE_ENGINE_PORT=8765 \
-    ZEROTRACE_LIVE_DB=/data/live-engine.sqlite3
+    ZEROTRACE_LIVE_DB=/data/live-engine.sqlite3 \
+    ZEROTRACE_NMAP_EXPECTED_VERSION=7.95 \
+    ZEROTRACE_SUBFINDER_EXPECTED_VERSION=${SUBFINDER_VERSION} \
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        nmap \
+        "nmap=${NMAP_VERSION}" \
         unzip \
     && rm -rf /var/lib/apt/lists/*
-
-ARG SUBFINDER_VERSION=2.6.7
-ARG TARGETARCH=amd64
 RUN curl -fsSL \
         "https://github.com/projectdiscovery/subfinder/releases/download/v${SUBFINDER_VERSION}/subfinder_${SUBFINDER_VERSION}_linux_${TARGETARCH}.zip" \
         -o /tmp/subfinder.zip \

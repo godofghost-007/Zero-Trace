@@ -1,0 +1,91 @@
+{
+  "checks": [
+    {
+      "check": "health_is_public",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "header_x_content_type_options",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "header_x_frame_options",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "header_referrer_policy",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "header_content_security_policy",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "header_x_request_id",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "api_cache_control_no_store",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "engine_status_requires_auth",
+      "detail": "401",
+      "passed": true
+    },
+    {
+      "check": "guard_chat_requires_auth",
+      "detail": "401",
+      "passed": true
+    },
+    {
+      "check": "metrics_requires_token",
+      "detail": "401",
+      "passed": true
+    },
+    {
+      "check": "metrics_accepts_token",
+      "detail": "200",
+      "passed": true
+    },
+    {
+      "check": "engine_metrics_requires_token",
+      "detail": "401",
+      "passed": true
+    },
+    {
+      "check": "engine_url_rejects_public_host",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "engine_url_accepts_loopback",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "engine_key_rejects_short_value",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "check": "error_envelope_has_no_traceback",
+      "detail": "401",
+      "passed": true
+    }
+  ],
+  "generatedAt": "2026-10-25T20:19:43.880860+00:00",
+  "limitations": [
+    "Configuration and header checks only, not a penetration test.",
+    "No live TLS proxy or Caddy assertion was exercised.",
+    "No authenticated role/CSRF workflow was exercised."
+  ],
+  "passed": true
+}

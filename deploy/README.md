@@ -25,6 +25,13 @@ the only public application, and Caddy terminates TLS.
 3. Open only `80/tcp`, `443/tcp`, and `443/udp` in the host firewall. Do not
    publish `8765` or `5432`.
 
+The Caddy service builds from `deploy/Dockerfile.caddy`; it is not the stock
+image because edge rate limiting uses a pinned `caddy-ratelimit` module. The
+Caddyfile limits `/api/v1/auth/*` to 10 requests/minute and the rest of
+`/api/v1/*` to 300 requests/minute per direct peer. If Cloudflare proxying is
+enabled, configure trusted proxies; otherwise every request is keyed on a
+Cloudflare address and the limit is much less useful.
+
 ## 3. Configuration
 
 Copy `.env.example` to `.env.production` on the server and set at least:
@@ -40,7 +47,15 @@ ZEROTRACE_MFA_ENCRYPTION_KEY=<Fernet key>
 ZEROTRACE_ENGINE_API_KEY=<long random value>
 ZEROTRACE_ENGINE_URL=http://127.0.0.1:8765
 ZEROTRACE_TRUST_PROXY=true
+# Pin released digests in production; leave the local tags for a source build.
+ZEROTRACE_BFF_IMAGE=ghcr.io/<owner>/<repo>/zerotrace-bff@sha256:<digest>
+ZEROTRACE_ENGINE_IMAGE=ghcr.io/<owner>/<repo>/zerotrace-engine@sha256:<digest>
+ZEROTRACE_CADDY_IMAGE=ghcr.io/<owner>/<repo>/zerotrace-caddy@sha256:<digest>
+ZEROTRACE_GUARD_BFF_API_KEY=<generated BFF-to-Guard key>
 ```
+
+Guard provider secrets live in a separate `.env.guard` file copied from
+`deploy/guard.env.example`. The BFF and engine do not receive that file.
 
 Generate the MFA key with:
 
@@ -105,27 +120,108 @@ the engine port.
 - Restore into a clean database and run the restore verification before trusting
   the backup. See `docs/LAB-RUNBOOK.md` and `docs/PRODUCTION-READINESS.md`.
 
-## 7. AI slots
+## 7. Guard and AI slots
 
-Guard and Intel are provider-agnostic. Set the three slots independently:
+Guard is deployed as a loopback sidecar in the production Compose stack. It
+authenticates the BFF, inspects the prompt, and only then calls the allowlisted
+OpenAI-compatible upstream. The provider key lives only in `.env.guard`, not in
+`.env.production` and never in the browser or BFF.
 
-- `GUARD_DETECTOR_*`: prompt-injection/jailbreak detector.
-- `GUARD_UPSTREAM_*`: OpenAI-compatible upstream chat model.
-- `INTEL_MODEL_*`: optional Intel enrichment model.
+The working upstream slot uses:
 
-The Guard upstream base URL is allowlisted. The provider key stays in the Guard
-process. Do not give the provider key to the browser, the BFF, or the engine.
+- `ZEROTRACE_GUARD_PROVIDER_API_KEY`
+- `ZEROTRACE_GUARD_UPSTREAM_ALLOWLIST`
+- `ZEROTRACE_GUARD_ALLOWED_MODELS`
+- `ZEROTRACE_GUARD_PII_ACTION`
+
+The built-in detector is deterministic regex/PII inspection. The
+`GUARD_DETECTOR_*` and `INTEL_MODEL_*` names in `.env.example` are reserved for
+the separate detector and Intel enrichment slots; they are **not wired to a
+model in this release**. Do not describe either as active.
+
+To generate the BFF-to-Guard credential:
+
+```bash
+export ZEROTRACE_GUARD_API_KEY_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+python -m scripts.generate_guard_credentials
+```
+
+Put `apiKey` in `.env.production` as `ZEROTRACE_GUARD_BFF_API_KEY` and
+`apiKeyDigest` plus the same `ZEROTRACE_GUARD_API_KEY_SECRET` in `.env.guard`.
+Copy `deploy/guard.env.example` to `.env.guard`, fill the provider values, and
+keep the file mode `0600`.
+
+The BFF exposes `POST /api/v1/guard/chat` for an authenticated operator. It
+accepts only `model`, `messages`, `temperature`, `top_p`, and `max_tokens`;
+streaming is not supported. The browser never receives the Guard or provider
+key. Point an OpenAI-compatible application at this route, not directly at the
+provider. See `docs/GUARD-EVALUATION.md`.
+
 NVIDIA's free API is trial/best-effort capacity and has no production SLA; use a
 paid or local endpoint for production guarantees.
 
-## 8. Rollback
+## 8. Observability
 
-1. Keep the previous image tag and the previous migration state.
+The optional overlay starts Prometheus, Alertmanager, and Grafana on loopback:
+
+```bash
+cp deploy/observability/metrics-token.example deploy/observability/metrics-token
+# Set ZEROTRACE_METRICS_TOKEN to the same value in .env.production.
+export ZEROTRACE_METRICS_TOKEN_FILE="$PWD/deploy/observability/metrics-token"
+export ZEROTRACE_GRAFANA_ADMIN_PASSWORD='a long unique password'
+docker compose \
+  -f deploy/compose.prod.yaml \
+  -f deploy/compose.observability.yaml up -d
+```
+
+Validate the configuration before starting it:
+
+```bash
+docker compose \
+  -f deploy/compose.prod.yaml \
+  -f deploy/compose.observability.yaml config --quiet
+docker run --rm \
+  -v "$PWD/deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+  -v "$PWD/deploy/observability/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+  -v "$PWD/deploy/observability/metrics-token.example:/etc/prometheus/metrics-token:ro" \
+  --entrypoint promtool prom/prometheus:v3.1.0 \
+  check config /etc/prometheus/prometheus.yml
+docker run --rm \
+  -v "$PWD/deploy/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro" \
+  --entrypoint amtool prom/alertmanager:v0.28.1 \
+  check-config /etc/alertmanager/alertmanager.yml
+```
+
+Prometheus, Alertmanager, and Grafana bind to `127.0.0.1`. Reach them through an
+SSH tunnel. Set `ZEROTRACE_GRAFANA_COOKIE_SECURE=true` only when Grafana is
+served over HTTPS. The shipped Alertmanager receiver is deliberately null; set
+a real pager/webhook receiver before relying on alerts.
+
+See `docs/SLO.md` and `docs/RUNBOOK-OPERATIONS.md`.
+
+## 9. Backups
+
+Use the encrypted backup CLI. Keep `ZEROTRACE_BACKUP_KEY` outside the backup
+host, verify every backup, and record restore drills:
+
+```bash
+export ZEROTRACE_BACKUP_KEY='...'
+python -m scripts.backup_database backup-postgres \
+  --container zerotrace-postgres-1 --database zerotrace --user zerotrace \
+  --output backups/postgres.ztb --offhost-dir /mnt/offhost/zerotrace
+python -m scripts.backup_database verify --backup backups/postgres.ztb
+```
+
+See `docs/BACKUP-RESTORE.md` for RPO/RTO, key rotation, restore, and retention.
+
+## 10. Rollback
+
+1. Keep the previous image digest and the previous migration state.
 2. Stop the stack.
-3. Restore the previous image tag and, if the new release included a migration,
-   run the down migration against the direct URL.
+3. Restore the previous image digest and, if the new release included a
+   migration, run the down migration against the direct URL.
 4. Start the stack and verify `/api/v1/health` and `/api/v1/ready`.
 5. Record the rollback in the release evidence.
 
 Never roll back by deleting data or by pointing the app at a stale SQLite file.
-The durable database is authoritative.
+The durable database is authoritative. See `docs/RELEASE-PROCESS.md`.

@@ -20,6 +20,8 @@ def app(tmp_path):
         "AUTO_CREATE_SCHEMA": True,
         "DEMO_MODE": True,
         "AUTH_REQUIRED": False,
+        "METRICS_ENABLED": True,
+        "METRICS_TOKEN": "test-metrics-token",
     })
     yield application
     with application.app_context():
@@ -119,6 +121,28 @@ def test_engine_proxy_forwards_only_allowed_fields(client, monkeypatch):
     )]
 
 
+def test_engine_client_forwards_authenticated_identity(client, monkeypatch):
+    captured = {}
+
+    def fake_init(self, base_url, api_key, *, default_headers=None):
+        captured.update(default_headers or {})
+        self.base_url = base_url
+        self.api_key = api_key
+        self.default_headers = dict(default_headers or {})
+
+    monkeypatch.setattr(EngineClient, "__init__", fake_init)
+    monkeypatch.setattr(
+        EngineClient,
+        "request",
+        lambda self, *args, **kwargs: {"state": "ready"},
+    )
+    response = client.get("/api/v1/engine/status")
+    assert response.status_code == 200
+    assert captured["X-ZeroTrace-Subject"] == "local-demo"
+    assert captured["X-ZeroTrace-Role"] == "admin"
+    assert captured["traceparent"].startswith("00-")
+
+
 def test_engine_intel_ingest_only_allows_kev(client, monkeypatch):
     calls = []
 
@@ -204,16 +228,17 @@ def test_engine_readiness_forwards_the_engine_result(client, monkeypatch):
 
 
 def test_engine_client_preserves_authorization_denials(monkeypatch):
-    def forbidden(request, timeout):
-        raise HTTPError(
-            request.full_url,
-            403,
-            "Forbidden",
-            {},
-            BytesIO(b'{"error":{"message":"Authorization denied"}}'),
-        )
+    class ForbiddenOpener:
+        def open(self, request, timeout):
+            raise HTTPError(
+                request.full_url,
+                403,
+                "Forbidden",
+                {},
+                BytesIO(b'{"error":{"message":"Authorization denied"}}'),
+            )
 
-    monkeypatch.setattr("backend.services.engine.urlopen", forbidden)
+    monkeypatch.setattr("backend.services.engine._OPENER", ForbiddenOpener())
     engine = EngineClient("http://127.0.0.1:8765", "sk-test")
     with pytest.raises(EngineError) as error:
         engine.request("POST", "/api/v1/recon/authorizations", {})
@@ -232,6 +257,116 @@ def test_engine_test_reports_a_safe_failure(client, monkeypatch):
     assert response.status_code == 200
     assert response.json["ok"] is False
     assert "unreachable" in response.json["message"].lower()
+
+
+def test_engine_schedule_requires_acknowledgement_and_bounded_interval(client):
+    missing = client.post(
+        "/api/v1/engine/schedules",
+        json={
+            "scopeId": "scope-lab",
+            "target": "lab.example.test",
+            "profileId": "synthetic_inventory_v1",
+            "intervalSeconds": 300,
+        },
+    )
+    assert missing.status_code == 400
+    assert missing.json["error"]["code"] == "authorization_required"
+
+    too_short = client.post(
+        "/api/v1/engine/schedules",
+        json={
+            "authorized": True,
+            "scopeId": "scope-lab",
+            "target": "lab.example.test",
+            "profileId": "synthetic_inventory_v1",
+            "intervalSeconds": 299,
+        },
+    )
+    assert too_short.status_code == 400
+
+
+def test_engine_schedule_forwards_only_allowed_fields(client, monkeypatch):
+    calls = []
+
+    def fake_request(self, method, path, payload=None, **kwargs):
+        calls.append((method, path, payload))
+        return {
+            "scheduleId": "schedule-1",
+            "target": "lab.example.test",
+            "enabled": True,
+        }
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.request", fake_request
+    )
+    response = client.post(
+        "/api/v1/engine/schedules",
+        json={
+            "authorized": True,
+            "scopeId": "scope-lab",
+            "target": "lab.example.test",
+            "profileId": "synthetic_inventory_v1",
+            "intervalSeconds": 600,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json["scheduleId"] == "schedule-1"
+    assert calls == [
+        (
+            "POST",
+            "/api/v1/recon/schedules",
+            {
+                "scopeId": "scope-lab",
+                "target": "lab.example.test",
+                "profileId": "synthetic_inventory_v1",
+                "intervalSeconds": 600,
+            },
+        )
+    ]
+
+
+def test_engine_schedule_list_run_and_disable(client, monkeypatch):
+    calls = []
+
+    def fake_request(self, method, path, payload=None, **kwargs):
+        calls.append((method, path, payload))
+        return {"items": [], "scheduleId": "schedule-1", "enabled": False}
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.request", fake_request
+    )
+    assert client.get("/api/v1/engine/schedules").status_code == 200
+    assert (
+        client.post("/api/v1/engine/schedules/schedule-1/run").status_code
+        == 200
+    )
+    assert (
+        client.delete("/api/v1/engine/schedules/schedule-1").status_code
+        == 200
+    )
+    assert calls == [
+        ("GET", "/api/v1/recon/schedules", None),
+        ("POST", "/api/v1/recon/schedules/schedule-1/run", None),
+        ("DELETE", "/api/v1/recon/schedules/schedule-1", None),
+    ]
+
+
+def test_engine_metrics_requires_token_and_proxies_text(client, monkeypatch):
+    def fake_metrics(self, *, timeout=5.0):
+        return "zerotrace_test_total 1\n"
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.metrics", fake_metrics
+    )
+    denied = client.get("/api/v1/engine/metrics")
+    assert denied.status_code == 401
+    allowed = client.get(
+        "/api/v1/engine/metrics",
+        headers={"Authorization": "Bearer test-metrics-token"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.mimetype == "text/plain"
+    assert b"zerotrace_test_total 1" in allowed.data
 
 
 def test_engine_endpoints_reject_non_json_and_foreign_origins(client):

@@ -10,6 +10,12 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .config import Config
 from .extensions import db
+from .observability import (
+    MetricsRegistry,
+    configure_logging,
+    request_id,
+    trace_context,
+)
 
 
 def validate_runtime_config(app: Flask) -> None:
@@ -48,6 +54,28 @@ def validate_runtime_config(app: Flask) -> None:
         ):
             if not str(app.config.get(name, "")).strip():
                 problems.append(f"{name} is required when OIDC is enabled")
+    if app.config.get("METRICS_ENABLED"):
+        metrics_token = str(app.config.get("METRICS_TOKEN", "")).strip()
+        if len(metrics_token) < 16:
+            problems.append(
+                "ZEROTRACE_METRICS_TOKEN must be at least 16 characters when "
+                "metrics are enabled"
+            )
+    if app.config.get("GUARD_PROXY_ENABLED"):
+        guard_key = str(app.config.get("GUARD_BFF_API_KEY", "")).strip()
+        if len(guard_key) < 16:
+            problems.append(
+                "ZEROTRACE_GUARD_BFF_API_KEY must be at least 16 characters "
+                "when the Guard proxy is enabled"
+            )
+        try:
+            from .services.guard_proxy import validate_guard_base_url
+
+            validate_guard_base_url(
+                str(app.config.get("GUARD_PROXY_URL", ""))
+            )
+        except ValueError as error:
+            problems.append(str(error))
     if problems:
         raise RuntimeError(
             "Unsafe production configuration: " + "; ".join(problems)
@@ -78,6 +106,12 @@ def create_app(test_config: dict | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
     validate_runtime_config(app)
+    configure_logging(
+        str(app.config.get("LOG_LEVEL", "INFO")),
+        json_format=str(app.config.get("LOG_FORMAT", "text")).lower() == "json",
+    )
+    metrics = MetricsRegistry()
+    app.extensions["metrics"] = metrics
     if app.config.get("TRUST_PROXY"):
         app.wsgi_app = ProxyFix(
             app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1
@@ -91,23 +125,66 @@ def create_app(test_config: dict | None = None) -> Flask:
     from .auth import auth, bootstrap_admin, configure_oidc, install_auth_guards
     from .cli import register_cli
     from .engine_api import engine_api
+    from .guard_api import guard_api
 
     app.register_blueprint(auth, url_prefix="/api/v1")
     app.register_blueprint(api, url_prefix="/api/v1")
     app.register_blueprint(engine_api, url_prefix="/api/v1")
+    app.register_blueprint(guard_api, url_prefix="/api/v1")
     configure_oidc(app)
     register_cli(app)
 
     @app.before_request
     def assign_request_id() -> None:
-        inbound = request.headers.get("X-Request-ID", "")
-        g.request_id = inbound[:96] if inbound and len(inbound) <= 96 else str(uuid4())
+        g.request_id = request_id(request.headers.get("X-Request-ID"))
+        context = trace_context(request.headers.get("traceparent"))
+        g.trace_id = context.trace_id
+        g.span_id = context.span_id
+        g.request_started = time.perf_counter()
 
     install_auth_guards(app)
 
     @app.after_request
     def attach_request_id(response):
+        duration = time.perf_counter() - getattr(
+            g, "request_started", time.perf_counter()
+        )
+        route = request.url_rule.rule if request.url_rule else "unmatched"
+        metrics.inc(
+            "zerotrace_http_requests_total",
+            labels={
+                "service": "bff",
+                "method": request.method,
+                "route": route,
+                "status": response.status_code,
+            },
+        )
+        metrics.observe(
+            "zerotrace_http_request_duration_seconds",
+            duration,
+            labels={
+                "service": "bff",
+                "method": request.method,
+                "route": route,
+            },
+        )
+        app.logger.info(
+            "request_completed",
+            extra={
+                "event": "request_completed",
+                "service": "bff",
+                "request_id": getattr(g, "request_id", None),
+                "trace_id": getattr(g, "trace_id", None),
+                "span_id": getattr(g, "span_id", None),
+                "method": request.method,
+                "path": route,
+                "status": response.status_code,
+                "duration_ms": round(duration * 1000, 2),
+                "client": request.remote_addr,
+            },
+        )
         response.headers["X-Request-ID"] = getattr(g, "request_id", str(uuid4()))
+        response.headers["X-Trace-ID"] = getattr(g, "trace_id", "")
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "same-origin"

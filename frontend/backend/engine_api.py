@@ -8,19 +8,20 @@ creation requires an explicit ``authorized: true`` acknowledgement.
 
 from __future__ import annotations
 
-from pathlib import Path
+import hmac
 import re
 import time
+from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
-from flask import Blueprint, current_app, g, jsonify, request
+from flask import Blueprint, Response, current_app, g, jsonify, request
 
 from .services.engine import (
+    LOOPBACK_HOSTS,
     EngineClient,
     EngineError,
     EngineSettingsStore,
-    LOOPBACK_HOSTS,
     validate_api_key,
     validate_base_url,
     validate_mode,
@@ -51,7 +52,21 @@ def _store() -> EngineSettingsStore:
 
 def _client() -> EngineClient:
     settings = _store().load()
-    return EngineClient(settings.base_url, settings.api_key)
+    headers: dict[str, str] = {}
+    trace_id = getattr(g, "trace_id", None)
+    span_id = getattr(g, "span_id", None)
+    if trace_id and span_id:
+        headers["traceparent"] = f"00-{trace_id}-{span_id}-01"
+    principal = getattr(g, "principal", None)
+    if principal is not None:
+        # The engine is loopback-only and trusts the BFF's API key. Forward the
+        # authenticated identity so engine-side owner checks are per-user, not
+        # a single shared ``local-operator`` identity.
+        headers["X-ZeroTrace-Subject"] = str(principal.subject)
+        headers["X-ZeroTrace-Role"] = str(principal.role)
+    return EngineClient(
+        settings.base_url, settings.api_key, default_headers=headers
+    )
 
 
 def _json_body() -> dict[str, object] | None:
@@ -78,10 +93,12 @@ def protect_local_endpoints():
         origin = request.headers.get("Origin")
         if origin:
             try:
-                origin_host = urlsplit(origin).hostname
+                origin_host = (urlsplit(origin).hostname or "").lower()
+                request_host = (urlsplit(f"//{request.host}").hostname or "").lower()
             except ValueError:
                 origin_host = None
-            if origin_host not in LOOPBACK_HOSTS:
+                request_host = ""
+            if origin_host != request_host and origin_host not in LOOPBACK_HOSTS:
                 return _error("origin_denied", "Request origin is not allowed.", 403)
     return None
 
@@ -158,6 +175,24 @@ def test_engine():
 @engine_api.get("/engine/status")
 def engine_status():
     return jsonify(_client().request("GET", "/api/v1/engine/status", timeout=6.0))
+
+
+@engine_api.get("/engine/metrics")
+def engine_metrics():
+    if not current_app.config.get("METRICS_ENABLED", False):
+        return _error("metrics_disabled", "Metrics are not enabled.", 404)
+    token = str(current_app.config.get("METRICS_TOKEN", "")).strip()
+    if token:
+        supplied = request.headers.get("Authorization", "")
+        if not hmac.compare_digest(supplied, f"Bearer {token}"):
+            return _error(
+                "metrics_unauthorized", "A metrics token is required.", 401
+            )
+    return Response(
+        _client().metrics(),
+        mimetype="text/plain",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @engine_api.get("/engine/readiness")
@@ -295,6 +330,77 @@ def engine_scan_result(scan_id: str):
     return jsonify(
         _client().request(
             "GET", f"/api/v1/recon/scans/{scan_id}/result", timeout=8.0
+        )
+    )
+
+
+@engine_api.get("/engine/schedules")
+def engine_schedules():
+    return jsonify(
+        _client().request("GET", "/api/v1/recon/schedules", timeout=6.0)
+    )
+
+
+@engine_api.post("/engine/schedules")
+def create_engine_schedule():
+    payload = _json_body()
+    if payload is None:
+        return _error("invalid_request", "A JSON object is required.", 400)
+    if payload.get("authorized") is not True:
+        return _error(
+            "authorization_required",
+            "Confirm that you are authorized to schedule this target.",
+            400,
+        )
+    fields = _only(
+        payload,
+        {
+            "authorized",
+            "scopeId",
+            "target",
+            "profileId",
+            "intervalSeconds",
+        },
+    )
+    fields.pop("authorized", None)
+    interval = fields.get("intervalSeconds")
+    if not isinstance(interval, int) or isinstance(interval, bool):
+        return _error(
+            "invalid_request", "intervalSeconds must be an integer.", 400
+        )
+    if not 300 <= interval <= 604800:
+        return _error(
+            "invalid_request",
+            "intervalSeconds must be between 300 and 604800.",
+            400,
+        )
+    return jsonify(
+        _client().request("POST", "/api/v1/recon/schedules", fields, timeout=8.0)
+    ), 201
+
+
+@engine_api.post("/engine/schedules/<schedule_id>/run")
+def run_engine_schedule(schedule_id: str):
+    if not SCAN_ID_PATTERN.fullmatch(schedule_id):
+        return _error("invalid_request", "Schedule ID is invalid.", 400)
+    return jsonify(
+        _client().request(
+            "POST",
+            f"/api/v1/recon/schedules/{schedule_id}/run",
+            timeout=12.0,
+        )
+    )
+
+
+@engine_api.delete("/engine/schedules/<schedule_id>")
+def disable_engine_schedule(schedule_id: str):
+    if not SCAN_ID_PATTERN.fullmatch(schedule_id):
+        return _error("invalid_request", "Schedule ID is invalid.", 400)
+    return jsonify(
+        _client().request(
+            "DELETE",
+            f"/api/v1/recon/schedules/{schedule_id}",
+            timeout=8.0,
         )
     )
 

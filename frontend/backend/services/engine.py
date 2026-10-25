@@ -16,7 +16,12 @@ from pathlib import Path
 import tempfile
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import (
+    HTTPRedirectHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 
 DEFAULT_ENGINE_BASE_URL = "http://127.0.0.1:8765"
 DEFAULT_ENGINE_API_KEY = "sk-zerotrace-local-engine-7f3c9a2b"
@@ -24,6 +29,17 @@ LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 MAX_RESPONSE_BYTES = 1_048_576
 MIN_API_KEY_LENGTH = 16
 MAX_API_KEY_LENGTH = 512
+
+
+class _NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        return None
+
+
+# The engine is loopback-only. Disable environment proxies so the engine API
+# key cannot be sent through an unrelated HTTP proxy, and refuse redirects so a
+# compromised loopback service cannot bounce the key to another host.
+_OPENER = build_opener(ProxyHandler({}), _NoRedirect)
 
 
 class EngineError(Exception):
@@ -185,9 +201,47 @@ class EngineSettingsStore:
 class EngineClient:
     """Minimal, bounded HTTP client for the live engine."""
 
-    def __init__(self, base_url: str, api_key: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        default_headers: dict[str, str] | None = None,
+    ) -> None:
         self.base_url = validate_base_url(base_url).rstrip("/")
         self.api_key = api_key
+        self.default_headers = dict(default_headers or {})
+
+    def metrics(self, *, timeout: float = 5.0) -> str:
+        """Fetch the engine's Prometheus text exposition.
+
+        The engine metrics route is intentionally separate from the JSON API.
+        It is only reachable on loopback and the BFF re-exposes it behind the
+        same bearer-token gate as its own metrics endpoint.
+        """
+
+        if not self.api_key:
+            raise EngineError("Live engine API key is not configured.", 400)
+        request = Request(
+            f"{self.base_url}/metrics",
+            headers={"X-API-Key": self.api_key, "Accept": "text/plain"},
+            method="GET",
+        )
+        try:
+            with _OPENER.open(request, timeout=timeout) as response:
+                body = response.read(MAX_RESPONSE_BYTES + 1)
+        except (HTTPError, URLError, TimeoutError, OSError) as error:
+            raise EngineError(
+                "Live engine metrics are unavailable.", 502
+            ) from error
+        if len(body) > MAX_RESPONSE_BYTES:
+            raise EngineError("Live engine metrics response was too large.", 502)
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise EngineError(
+                "Live engine returned invalid metrics.", 502
+            ) from error
 
     def request(
         self,
@@ -206,6 +260,7 @@ class EngineClient:
         headers = {
             "Accept": "application/json",
             "X-API-Key": self.api_key,
+            **self.default_headers,
         }
         if extra_headers:
             headers.update(extra_headers)
@@ -216,7 +271,7 @@ class EngineClient:
             f"{self.base_url}{path}", data=data, headers=headers, method=method
         )
         try:
-            with urlopen(request, timeout=timeout) as response:
+            with _OPENER.open(request, timeout=timeout) as response:
                 body = response.read(MAX_RESPONSE_BYTES + 1)
         except HTTPError as error:
             body = error.read(MAX_RESPONSE_BYTES)

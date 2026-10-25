@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  release:
+    name: Build, sign, and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: BFF metadata
+        id: bff-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+
+      - name: Engine metadata
+        id: engine-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+
+      - name: Caddy metadata
+        id: caddy-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-
+
+      - name: Build and push BFF
+        id: bff
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: ${{ steps.bff-meta.outputs.tags }}
+          labels: ${{ steps.bff-meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+      - name: Build and push engine
+        id: engine
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile.engine
+          push: true
+          tags: ${{ steps.engine-meta.outputs.tags }}
+          labels: ${{ steps.engine-meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+      - name: Build and push Caddy
+        id: caddy
+        uses: docker/build-push-action@v6
+        with:
+          context: ./deploy
+          file: ./deploy/Dockerfile.caddy
+          push: true
+          tags: ${{ steps.caddy-meta.outputs.tags }}
+          labels: ${{ steps.caddy-meta.outputs.labels }}
+          provenance: true
+          sbom: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign BFF image
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff@${{ steps.bff.outputs.digest }}"
+
+      - name: Sign engine image
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}"
+
+      - name: Sign Caddy image
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}"
+
+      - name: Attest BFF provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff
+          subject-digest: ${{ steps.bff.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest engine provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine
+          subject-digest: ${{ steps.engine.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest Caddy provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy
+          subject-digest: ${{ steps.caddy.outputs.digest }}
+          push-to-registry: true
+
+      - name: BFF image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff@${{ steps.bff.outputs.digest }}
+          format: spdx-json
+          artifact-name: sbom-bff-image.spdx.json
+          dependency-snapshot: false
+
+      - name: Engine image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}
+          format: spdx-json
+          artifact-name: sbom-engine-image.spdx.json
+          dependency-snapshot: false
+
+      - name: Caddy image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}
+          format: spdx-json
+          artifact-name: sbom-caddy-image.spdx.json
+          dependency-snapshot: false
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          body: |
+            ZeroTrace ${{ github.ref_name }}
+
+            Images:
+            - `${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff@${{ steps.bff.outputs.digest }}`
+            - `${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}`
+            - `${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}`
+
+            All images are signed with cosign keyless signing and carry a
+            build-provenance attestation. Verify before deploying:
+
+            ```bash
+            cosign verify \
+              --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}"
+            ```

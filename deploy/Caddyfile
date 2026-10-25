@@ -17,6 +17,30 @@
 		-Server
 	}
 
+	# Edge rate limits are a coarse first line of defense. The BFF and engine
+	# retain their own application-level limits. `remote_host` is the direct
+	# peer; if Cloudflare proxying is enabled, configure trusted proxies or the
+	# limit will key on Cloudflare's address rather than the client.
+	rate_limit {
+		zone auth {
+			match {
+				path /api/v1/auth/*
+			}
+			key {remote_host}
+			events 10
+			window 1m
+		}
+		zone api {
+			match {
+				path /api/v1/*
+			}
+			key {remote_host}
+			events 300
+			window 1m
+		}
+		jitter 0.1
+	}
+
 	# The BFF shares the engine network namespace, so it is reachable at
 	# engine:3000 from Caddy while the engine itself stays off the host.
 	reverse_proxy engine:3000 {

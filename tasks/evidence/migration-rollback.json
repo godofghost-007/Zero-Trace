@@ -1,0 +1,44 @@
+{
+  "kind": "migration-apply-and-rollback-drill",
+  "generatedAt": "2026-10-25T18:15:00Z",
+  "environment": {
+    "postgres": "postgres:16-alpine (Docker, zt-migrate-drill)",
+    "host": "local Windows developer workstation",
+    "database": "zerotrace",
+    "connection": "127.0.0.1:55432"
+  },
+  "steps": [
+    "Started a disposable PostgreSQL container.",
+    "Applied migrations 0001 through 0009 with scripts/run_migrations.py.",
+    "Confirmed live_scan_schedules exists.",
+    "Ran scripts/run_migrations.py --rollback; confirmed 0009 was removed and live_scan_schedules no longer exists.",
+    "Applied 0009 again, rolled back 0009 and 0008; confirmed the latest version is 0007 and auth_audit_events no longer exists."
+  ],
+  "observed": {
+    "appliedVersions": [
+      "0001_foundation",
+      "0002_event_reliability",
+      "0003_recon",
+      "0004_intel",
+      "0005_recon_inventory",
+      "0006_correlation",
+      "0007_live_runtime",
+      "0008_identity_hardening",
+      "0009_scan_schedules"
+    ],
+    "rolledBack": [
+      "0009_scan_schedules",
+      "0008_identity_hardening"
+    ],
+    "latestVersionAfterRollback": "0007_live_runtime",
+    "scheduleTableAfterRollback": null,
+    "authAuditTableAfterRollback": null
+  },
+  "result": "pass",
+  "limitations": [
+    "Disposable local PostgreSQL, not a production VPS or Supabase project.",
+    "No live application traffic was running during the rollback.",
+    "No destructive data migration was exercised.",
+    "The rollback does not prove a production blue-green or canary rollout."
+  ]
+}
