@@ -6,18 +6,19 @@ evidence below is true for the exact commit and the exact deployment target.
 
 ## Current status
 
-**NOT PASSED.** The repository has strong local evidence at commit `79c1507`
-on `feature/phase-17-production-hardening`, but that commit has not been pushed
-to a remote, no real VPS or Supabase deployment has been performed, no signed
-release exists, and no human signoff is recorded.
+**NOT PASSED.** The repository has strong local evidence at commit `86b0dac`
+on `feature/phase-17-production-hardening`, but there is no real VPS or
+Supabase deployment, no live identity provider, no enforced Guard egress
+lockdown, no signed release, and no human signoff. The local preview remains
+loopback-only and must not be exposed publicly.
 
 ## Required evidence
 
 | Gate item | Required evidence | Current status |
 |---|---|---|
-| Root tests | `pytest -q` green, including disposable PostgreSQL | Pass (265 passed) |
-| BFF tests | `pytest backend/tests -q` green | Pass (61 passed) |
-| Frontend | typecheck, unit tests, production build | Pass (6 tests) |
+| Root tests | `pytest -q` green, including disposable PostgreSQL | Pass locally (270 passed, 4 skipped) |
+| BFF tests | `pytest backend/tests -q` green | Pass locally (70 passed) |
+| Frontend | typecheck, unit tests, production build | Pass locally (6 unit tests) |
 | Migration rollback | apply and rollback against PostgreSQL | Pass locally (`tasks/evidence/migration-rollback.json`) |
 | Encrypted restore | destructive restore into a clean database | Pass locally (`tasks/evidence/postgres-backup-restore.json`) |
 | Dependency audit | `pip-audit` for engine and BFF | Pass locally |
@@ -27,13 +28,14 @@ release exists, and no human signoff is recorded.
 | Edge rate limit | Caddy custom image and 2-request limit test | Pass locally (`tasks/evidence/observability-config.json`) |
 | Load smoke | bounded error rate and p95 | Pass locally (`tasks/evidence/load-test.json`) |
 | Container builds | BFF, engine, and Caddy images | Pass locally; CI configured, not run. Guard reuses the engine image. |
-| CI and CodeQL | required checks green in GitHub | Pending: no git remote |
+| Observability config | `promtool` and `amtool` validation in CI | Pass locally after entrypoint fix; CI rerun pending |
+| CI and CodeQL | required checks green in GitHub | Pending: prior run failed on the observability entrypoint; rerun pending |
 | Branch protection | ruleset applied to `main` | Pending |
 | Signed release | cosign signature and provenance | Pending |
 | Real deployment | VPS + Supabase + TLS + Caddy | Pending |
 | OIDC | live identity-provider login and MFA | Pending |
 | Egress lockdown | BFF cannot reach the model provider directly | Pending |
-| Browser E2E | login, scope, multi-profile scan, Guard, failure states | Pending |
+| Browser E2E | login, scope, Guard, failure states, accessibility | Pass locally: 24 Playwright tests across Chromium, Firefox, and WebKit (`tasks/evidence/browser-e2e.json`); CI job pending. Multi-profile scanning is documented as out of scope for the deterministic browser suite. |
 | Human signoff | named reviewer and date | Pending |
 
 ## Deployment acceptance

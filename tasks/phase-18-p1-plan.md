@@ -55,7 +55,7 @@ with steps 3–5.
 
 ### Phase A — Release path and CI
 
-- [ ] A1: Fix the frontend CI pnpm setup and confirm all five CI jobs green.
+- [ ] A1: Fix the frontend CI pnpm setup and confirm all seven CI jobs green.
 - [ ] A2: Add CodeQL/release workflow validation and fix GHCR lowercase paths.
 - [ ] A3: Add CI validation for observability configs and image SBOM artifacts.
 - [ ] A4: Open/merge the feature PR, apply the ruleset, and tag a signed release.
@@ -92,7 +92,7 @@ with steps 3–5.
 ### Phase E — Browser E2E and accessibility
 
 - [ ] E1: Add Playwright and a deterministic BFF+engine fixture.
-- [ ] E2: Add login, scope creation, multi-profile synthetic scan, Guard, and
+- [ ] E2: Add login, scope creation, synthetic scan (multi-profile documented as out of scope), Guard, and
       failure-state specs.
 - [ ] E3: Add axe-core checks and remove zoom-blocking markup.
 - [ ] E4: Add Chromium/Firefox/WebKit projects and a CI job.
@@ -132,7 +132,7 @@ with steps 3–5.
 
 ### Checkpoint A — CI green
 
-- [ ] All five CI jobs pass on one commit.
+- [ ] All seven CI jobs pass on one commit.
 - [ ] CodeQL runs on the PR.
 - [ ] No secrets in the diff.
 

@@ -131,14 +131,16 @@ jobs:
         run: |
           docker run --rm \
             -v "$PWD/deploy/observability:/etc/prometheus:ro" \
+            --entrypoint promtool \
             prom/prometheus:v3.1.0 \
-            promtool check config /etc/prometheus/prometheus.yml
+            check config /etc/prometheus/prometheus.yml
       - name: Validate Alertmanager config
         run: |
           docker run --rm \
             -v "$PWD/deploy/observability:/etc/alertmanager:ro" \
+            --entrypoint amtool \
             prom/alertmanager:v0.28.1 \
-            amtool check-config /etc/alertmanager/alertmanager.yml
+            check-config /etc/alertmanager/alertmanager.yml
 
   runtime-smoke:
     name: Runtime security and load smoke

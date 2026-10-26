@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "date": "2026-10-27",
+  "commit": "86b0dac",
+  "scope": "local Playwright run against the production build served by the Flask BFF; synthetic inventory scan only",
+  "command": "ZEROTRACE_E2E_BROWSERS=chromium,firefox,webkit pnpm test:e2e",
+  "browsers": ["chromium", "firefox", "webkit"],
+  "tests": {
+    "total": 24,
+    "passed": 24,
+    "failed": 0,
+    "duration": "2.2m"
+  },
+  "coverage": [
+    "password login, invalid credentials, TOTP enrollment and MFA challenge",
+    "deterministic Recon -> Intel -> Guard demo flow",
+    "scope creation and synthetic inventory scan against lab.example.test",
+    "engine outage handling and disabled scope creation",
+    "axe WCAG 2.0 A/AA checks for login and operator console"
+  ],
+  "limitations": [
+    "No multi-profile Nmap/Subfinder scan in browser E2E; that path depends on host binaries and live network behavior.",
+    "Local run only; the GitHub Actions browser job must pass before this gate item is closed.",
+    "This is not evidence of a public production deployment."
+  ]
+}
