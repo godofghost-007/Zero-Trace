@@ -36,6 +36,10 @@ backups/
 .docker/
 docker-compose.override.yml
 coverage.xml
+frontend/.e2e-data/
+frontend/.e2e-results/
+frontend/playwright-report/
+frontend/test-results/
 
 # Editors and operating-system files
 .vscode/settings.json

@@ -38,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const session = await apiRequest<AuthSession>("/auth/session");
+      const session = await apiRequest<AuthSession>("/auth/session", { signal: AbortSignal.timeout(10_000) });
       setUser(session.user);
       setCsrfToken(session.csrfToken);
       setMfaRequired(session.mfaVerified === false);

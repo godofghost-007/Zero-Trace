@@ -447,3 +447,50 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
 .login-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 28px; padding-top: 13px; border-top: 1px solid var(--line); color: #969188; font: 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; }
 @media (max-width: 900px) { .login-page { grid-template-columns: 1fr; } .login-brand { min-height: 330px; padding: 48px 28px; } .login-brand h1 { font-size: 47px; } .login-panel { padding: 38px 28px; border-left: 0; border-top: 1px solid var(--line); } }
 @media (max-width: 620px) { .user-pill { display: none; } .login-brand { min-height: 285px; padding: 34px 20px; } .login-brand h1 { font-size: 38px; } .login-brand p { font-size: 12px; } .login-boundaries { margin-top: 22px; } .login-panel { padding: 30px 20px; } .login-foot { flex-direction: column; } }
+
+/* Accessibility: keep muted copy at WCAG AA contrast on the paper palette. */
+.page-content p,
+.page-content small,
+.page-content .panel-tag,
+.page-content .eyebrow,
+.page-content .topology-kicker,
+.page-content .engine-status,
+.page-content .cycle-number,
+.page-content .metric-card > span,
+.page-content .metric-card em,
+.page-content .engine-summary small,
+.page-content .store-node small,
+.page-content .infra-node small,
+.page-content .engine-node small,
+.page-content .engine-node .engine-topline span,
+.page-content .topology-footnote span,
+.page-content .connector-down span,
+.page-content .data-banner small,
+.page-content .field small,
+.page-content .kv-row span,
+.page-content .result-card small,
+.page-content .queue-item small,
+.page-content .scope-row small,
+.page-content .empty-console p,
+.page-content .verification-panel small,
+.page-content .checkbox-row span,
+.page-content .small-warning,
+.page-content .empty-demo p,
+.page-content .proposal-note,
+.page-content .guard-note,
+.page-footer span,
+.breadcrumb,
+.mfa-panel > p,
+.login-panel > p,
+.login-panel .field small,
+.login-foot span,
+.auth-loading {
+  color: #5b5954 !important;
+}
+
+.nav-code,
+.workspace-label,
+.build-stamp span,
+.build-stamp small {
+  color: #b3bac1 !important;
+}

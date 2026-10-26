@@ -125,6 +125,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Create placeholder metrics token
+        run: printf 'ci-only-token\n' > deploy/observability/metrics-token
       - name: Validate Prometheus rules
         run: |
           docker run --rm \
@@ -217,3 +219,49 @@ jobs:
           format: spdx-json
           artifact-name: sbom-caddy-image.spdx.json
           dependency-snapshot: false
+
+  browser-e2e:
+    name: Browser E2E and accessibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            frontend/requirements.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.18.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . -r frontend/requirements.txt
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Build UI
+        working-directory: frontend
+        run: pnpm build
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - name: Browser E2E and accessibility
+        working-directory: frontend
+        run: pnpm test:e2e
+        env:
+          ZEROTRACE_E2E_BROWSERS: chromium,firefox,webkit
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-evidence
+          path: frontend/.e2e-results
+          if-no-files-found: ignore

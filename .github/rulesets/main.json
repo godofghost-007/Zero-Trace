@@ -32,6 +32,7 @@
           { "context": "Frontend" },
           { "context": "Runtime security and load smoke" },
           { "context": "Observability config" },
+          { "context": "Browser E2E and accessibility" },
           { "context": "Container builds" },
           { "context": "Analyze (python)" },
           { "context": "Analyze (javascript-typescript)" }
