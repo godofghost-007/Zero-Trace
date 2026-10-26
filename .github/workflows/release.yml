@@ -20,6 +20,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Compute lowercase image prefix
+        id: image-prefix
+        run: echo "prefix=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -33,7 +37,7 @@ jobs:
         id: bff-meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff
+          images: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-bff
           tags: |
             type=ref,event=tag
             type=sha,prefix=sha-
@@ -42,7 +46,7 @@ jobs:
         id: engine-meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine
+          images: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-engine
           tags: |
             type=ref,event=tag
             type=sha,prefix=sha-
@@ -51,7 +55,7 @@ jobs:
         id: caddy-meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy
+          images: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-caddy
           tags: |
             type=ref,event=tag
             type=sha,prefix=sha-
@@ -95,39 +99,39 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Sign BFF image
-        run: cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff@${{ steps.bff.outputs.digest }}"
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-bff@${{ steps.bff.outputs.digest }}"
 
       - name: Sign engine image
-        run: cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}"
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-engine@${{ steps.engine.outputs.digest }}"
 
       - name: Sign Caddy image
-        run: cosign sign --yes "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}"
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}"
 
       - name: Attest BFF provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-bff
           subject-digest: ${{ steps.bff.outputs.digest }}
           push-to-registry: true
 
       - name: Attest engine provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-engine
           subject-digest: ${{ steps.engine.outputs.digest }}
           push-to-registry: true
 
       - name: Attest Caddy provenance
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy
+          subject-name: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-caddy
           subject-digest: ${{ steps.caddy.outputs.digest }}
           push-to-registry: true
 
       - name: BFF image SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff@${{ steps.bff.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-bff@${{ steps.bff.outputs.digest }}
           format: spdx-json
           artifact-name: sbom-bff-image.spdx.json
           dependency-snapshot: false
@@ -135,7 +139,7 @@ jobs:
       - name: Engine image SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-engine@${{ steps.engine.outputs.digest }}
           format: spdx-json
           artifact-name: sbom-engine-image.spdx.json
           dependency-snapshot: false
@@ -143,7 +147,7 @@ jobs:
       - name: Caddy image SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}
+          image: ${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}
           format: spdx-json
           artifact-name: sbom-caddy-image.spdx.json
           dependency-snapshot: false
@@ -156,9 +160,9 @@ jobs:
             ZeroTrace ${{ github.ref_name }}
 
             Images:
-            - `${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-bff@${{ steps.bff.outputs.digest }}`
-            - `${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}`
-            - `${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}`
+            - `${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-bff@${{ steps.bff.outputs.digest }}`
+            - `${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-engine@${{ steps.engine.outputs.digest }}`
+            - `${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-caddy@${{ steps.caddy.outputs.digest }}`
 
             All images are signed with cosign keyless signing and carry a
             build-provenance attestation. Verify before deploying:
@@ -167,5 +171,5 @@ jobs:
             cosign verify \
               --certificate-identity-regexp "https://github.com/${{ github.repository }}/.*" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-              "${{ env.REGISTRY }}/${{ github.repository }}/zerotrace-engine@${{ steps.engine.outputs.digest }}"
+              "${{ env.REGISTRY }}/${{ steps.image-prefix.outputs.prefix }}/zerotrace-engine@${{ steps.engine.outputs.digest }}"
             ```

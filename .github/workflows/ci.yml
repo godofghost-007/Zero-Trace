@@ -120,6 +120,24 @@ jobs:
       - name: Build
         run: pnpm build
 
+  observability:
+    name: Observability config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Prometheus rules
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy/observability:/etc/prometheus:ro" \
+            prom/prometheus:v3.1.0 \
+            promtool check config /etc/prometheus/prometheus.yml
+      - name: Validate Alertmanager config
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy/observability:/etc/alertmanager:ro" \
+            prom/alertmanager:v0.28.1 \
+            amtool check-config /etc/alertmanager/alertmanager.yml
+
   runtime-smoke:
     name: Runtime security and load smoke
     runs-on: ubuntu-latest

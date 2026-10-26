@@ -12,6 +12,7 @@ Use the CI job names exactly:
 - `BFF and identity`
 - `Frontend`
 - `Runtime security and load smoke`
+- `Observability config`
 - `Container builds`
 - `Analyze (python)` and `Analyze (javascript-typescript)` (from
   `.github/workflows/codeql.yml`)
