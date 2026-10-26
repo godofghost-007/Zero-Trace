@@ -1,7 +1,7 @@
 # Phase 18 P0 closure and P1 hardening tracker
 
 Plan: `tasks/phase-18-p1-plan.md`
-Baseline: `4e5f982` (last pushed); current work is uncommitted on `feature/phase-17-production-hardening`.
+Baseline: `b749c0c` (pushed); local verification complete on `feature/phase-17-production-hardening`.
 
 ## Phase A - Release path and CI
 

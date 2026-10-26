@@ -6,7 +6,7 @@ evidence below is true for the exact commit and the exact deployment target.
 
 ## Current status
 
-**NOT PASSED.** The repository has strong local evidence at commit `4e5f982`
+**NOT PASSED.** The repository has strong local evidence at commit `b749c0c`
 on `feature/phase-17-production-hardening`, plus uncommitted P1 hardening
 (NVD/EPSS/KEV integrity, CPE ranges, freshness UI, scanner environment
 allowlisting, Guard detector/live-eval paths, privacy export/erasure, and
