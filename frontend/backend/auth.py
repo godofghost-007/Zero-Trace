@@ -62,6 +62,7 @@ PUBLIC_ENDPOINTS = {
     ("GET", "/api/v1/ready"),
     ("GET", "/api/v1/metrics"),
     ("GET", "/api/v1/engine/metrics"),
+    ("GET", "/api/v1/auth/config"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/auth/password-reset"),
     ("GET", "/api/v1/auth/oidc/login"),
@@ -270,6 +271,14 @@ def configure_oidc(app) -> bool:
     if not issuer or not client_id or not client_secret:
         app.logger.warning(
             "OIDC is enabled but issuer/client credentials are incomplete"
+        )
+        return False
+    issuer_parts = urlsplit(issuer)
+    if issuer_parts.scheme != "https" and (
+        issuer_parts.hostname or ""
+    ).lower() not in {"127.0.0.1", "localhost", "::1"}:
+        app.logger.warning(
+            "OIDC issuer must use HTTPS outside a loopback test provider"
         )
         return False
     oauth.init_app(app)
@@ -519,6 +528,14 @@ def _public_user(user: UserAccount) -> dict[str, object]:
         "createdAt": user.created_at.isoformat() if user.created_at else None,
         "lastLoginAt": user.last_login_at.isoformat() if user.last_login_at else None,
     }
+
+
+@auth.get("/auth/config")
+def auth_config():
+    return jsonify({
+        "oidcEnabled": bool(current_app.config.get("AUTH_OIDC_READY")),
+        "oidcLoginUrl": "/api/v1/auth/oidc/login",
+    })
 
 
 @auth.post("/auth/login")
@@ -949,11 +966,22 @@ def oidc_callback():
     except Exception:
         current_app.logger.exception("OIDC callback failed")
         return _error("oidc_failed", "The identity provider rejected the sign-in.", 401)
-    issuer = str(userinfo.get("iss") or current_app.config.get("AUTH_OIDC_ISSUER"))
+    configured_issuer = str(
+        current_app.config.get("AUTH_OIDC_ISSUER", "")
+    ).rstrip("/")
+    issuer = str(userinfo.get("iss") or configured_issuer).rstrip("/")
     subject = str(userinfo.get("sub") or "")
     email_value = userinfo.get("email")
+    email_verified = userinfo.get("email_verified") is True
     if not issuer or not subject:
         return _error("oidc_failed", "The identity provider response is incomplete.", 401)
+    if configured_issuer and issuer != configured_issuer:
+        _record_auth_event("oidc_login", "issuer_mismatch", detail=issuer[:255])
+        return _error(
+            "oidc_failed",
+            "The identity provider response came from an unexpected issuer.",
+            401,
+        )
     identity = OidcIdentity.query.filter_by(
         issuer=issuer, subject=subject
     ).first()
@@ -966,6 +994,15 @@ def oidc_callback():
                 email = _normalize_email(email_value)
             except AuthError:
                 email = ""
+        if email and not email_verified:
+            _record_auth_event(
+                "oidc_login", "email_unverified", detail=email
+            )
+            return _error(
+                "oidc_email_unverified",
+                "The identity provider did not verify this email address.",
+                403,
+            )
         user = (
             UserAccount.query.filter_by(email=email).first()
             if email
@@ -975,7 +1012,7 @@ def oidc_callback():
             if not email:
                 return _error(
                     "oidc_failed",
-                    "The identity provider did not return an email address.",
+                    "The identity provider did not return a verified email address.",
                     403,
                 )
             try:

@@ -32,7 +32,12 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
   const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
   if (!response.ok) {
     const err = (payload?.error ?? {}) as Record<string, unknown>;
-    if (response.status === 401 && path !== "/auth/login" && path !== "/auth/session") {
+    if (
+      response.status === 401 &&
+      path !== "/auth/login" &&
+      path !== "/auth/session" &&
+      path !== "/auth/mfa/verify"
+    ) {
       window.dispatchEvent(new Event("zt-auth-required"));
     }
     throw new ApiError(

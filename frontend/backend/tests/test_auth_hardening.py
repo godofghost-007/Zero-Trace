@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+
 import pytest
 from cryptography.fernet import Fernet
 
@@ -5,6 +8,7 @@ from backend import create_app
 from backend.auth import create_user
 from backend.extensions import db
 from backend.mfa import generate_key, totp
+from backend.models import OidcIdentity
 
 
 def test_production_config_rejects_local_demo_defaults():
@@ -42,6 +46,27 @@ def test_production_config_rejects_missing_engine_key():
             "ENGINE_API_KEY": "",
         })
     assert "ZEROTRACE_ENGINE_API_KEY" in str(error.value)
+
+
+def test_production_config_rejects_insecure_oidc_issuer():
+    with pytest.raises(RuntimeError) as error:
+        create_app({
+            "ENVIRONMENT": "production",
+            "SECRET_KEY": "x" * 64,
+            "SQLALCHEMY_DATABASE_URI": "postgresql://user:pass@db.example/zt",
+            "AUTO_CREATE_SCHEMA": False,
+            "DEMO_MODE": False,
+            "AUTH_REQUIRED": True,
+            "AUTH_COOKIE_SECURE": True,
+            "AUTH_MFA_ENCRYPTION_KEY": Fernet.generate_key().decode(),
+            "ENGINE_URL": "http://127.0.0.1:8765",
+            "ENGINE_API_KEY": "e" * 32,
+            "AUTH_OIDC_ENABLED": True,
+            "AUTH_OIDC_ISSUER": "http://idp.example",
+            "AUTH_OIDC_CLIENT_ID": "client",
+            "AUTH_OIDC_CLIENT_SECRET": "secret",
+        })
+    assert "HTTPS" in str(error.value)
 
 
 @pytest.fixture()
@@ -97,6 +122,89 @@ def login(client, email="admin@zerotrace.local", password="correct horse battery
 
 def csrf_for(response):
     return response.json["csrfToken"]
+
+
+class _FakeOidcClient:
+    def __init__(self, userinfo):
+        self._userinfo = userinfo
+
+    def authorize_access_token(self):
+        return {"userinfo": self._userinfo}
+
+    def userinfo(self):
+        return self._userinfo
+
+
+def _fake_oidc(userinfo):
+    return patch(
+        "backend.auth.oauth",
+        SimpleNamespace(oidc=_FakeOidcClient(userinfo)),
+    )
+
+
+def test_auth_config_is_public_and_reports_oidc_state(app, client):
+    response = client.get("/api/v1/auth/config")
+    assert response.status_code == 200
+    assert response.json == {
+        "oidcEnabled": False,
+        "oidcLoginUrl": "/api/v1/auth/oidc/login",
+    }
+    app.config["AUTH_OIDC_READY"] = True
+    assert client.get("/api/v1/auth/config").json["oidcEnabled"] is True
+
+
+def test_oidc_callback_rejects_unverified_email_link(app, client):
+    app.config["AUTH_OIDC_READY"] = True
+    app.config["AUTH_OIDC_ISSUER"] = "https://idp.example"
+    with _fake_oidc({
+        "iss": "https://idp.example",
+        "sub": "subject-unverified",
+        "email": "admin@zerotrace.local",
+        "email_verified": False,
+    }):
+        response = client.get("/api/v1/auth/oidc/callback")
+
+    assert response.status_code == 403
+    assert response.json["error"]["code"] == "oidc_email_unverified"
+    with app.app_context():
+        assert OidcIdentity.query.filter_by(
+            subject="subject-unverified"
+        ).first() is None
+
+
+def test_oidc_callback_links_a_verified_email(app, client):
+    app.config["AUTH_OIDC_READY"] = True
+    app.config["AUTH_OIDC_ISSUER"] = "https://idp.example"
+    with _fake_oidc({
+        "iss": "https://idp.example",
+        "sub": "subject-verified",
+        "email": "admin@zerotrace.local",
+        "email_verified": True,
+    }):
+        response = client.get("/api/v1/auth/oidc/callback")
+
+    assert response.status_code == 302
+    with app.app_context():
+        identity = OidcIdentity.query.filter_by(
+            subject="subject-verified"
+        ).one()
+        assert identity.email == "admin@zerotrace.local"
+    assert client.get("/api/v1/auth/session").status_code == 200
+
+
+def test_oidc_callback_rejects_an_issuer_mismatch(app, client):
+    app.config["AUTH_OIDC_READY"] = True
+    app.config["AUTH_OIDC_ISSUER"] = "https://idp.example"
+    with _fake_oidc({
+        "iss": "https://evil.example",
+        "sub": "subject-mismatch",
+        "email": "admin@zerotrace.local",
+        "email_verified": True,
+    }):
+        response = client.get("/api/v1/auth/oidc/callback")
+
+    assert response.status_code == 401
+    assert response.json["error"]["code"] == "oidc_failed"
 
 
 def test_mfa_enrollment_requires_a_second_factor_before_api_access(app, client):

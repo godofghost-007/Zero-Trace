@@ -418,6 +418,12 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
 .auth-loading { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: #8b8880; background: var(--paper); font: 9px "SFMono-Regular", Consolas, monospace; letter-spacing: .12em; }
 .auth-spinner { width: 14px; height: 14px; display: block; border: 2px solid rgba(255,255,255,.25); border-top-color: #e6b1a3; border-radius: 50%; animation: zt-spin 1s linear infinite; }
 .auth-error-banner { margin: 0; }
+.mfa-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--paper); }
+.mfa-panel { width: min(470px, 100%); padding: clamp(28px, 5vw, 48px); border: 1px solid var(--line); background: var(--paper-light); }
+.mfa-panel h1 { margin: 0; color: #252b33; font-size: 28px; line-height: 1.1; font-weight: 650; letter-spacing: -.04em; }
+.mfa-panel > p { margin: 11px 0 24px; color: #73716b; font-size: 12px; line-height: 1.55; }
+.mfa-panel form { display: grid; gap: 13px; }
+.mfa-panel .login-brand-mark { margin-bottom: 18px; }
 .login-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0,1.25fr) minmax(380px,.75fr); background: var(--paper); }
 .login-brand { position: relative; display: flex; flex-direction: column; justify-content: center; overflow: hidden; padding: 7vw; background: #252d39; color: #f6f3ed; }
 .login-brand::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(120deg, rgba(0,0,0,.85), transparent 72%); }
@@ -437,6 +443,7 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
 .login-panel code { padding: 1px 4px; border: 1px solid #e5ded3; border-radius: 2px; background: #f7f4ed; color: #5f5c57; font: 9px "SFMono-Regular", Consolas, monospace; }
 .login-panel form { display: grid; gap: 13px; }
 .login-submit { width: 100%; margin-top: 3px; }
+.login-sso { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 11px; text-decoration: none; }
 .login-foot { display: flex; justify-content: space-between; gap: 10px; margin-top: 28px; padding-top: 13px; border-top: 1px solid var(--line); color: #969188; font: 7px "SFMono-Regular", Consolas, monospace; letter-spacing: .08em; }
 @media (max-width: 900px) { .login-page { grid-template-columns: 1fr; } .login-brand { min-height: 330px; padding: 48px 28px; } .login-brand h1 { font-size: 47px; } .login-panel { padding: 38px 28px; border-left: 0; border-top: 1px solid var(--line); } }
 @media (max-width: 620px) { .user-pill { display: none; } .login-brand { min-height: 285px; padding: 34px 20px; } .login-brand h1 { font-size: 38px; } .login-brand p { font-size: 12px; } .login-boundaries { margin-top: 22px; } .login-panel { padding: 30px 20px; } .login-foot { flex-direction: column; } }

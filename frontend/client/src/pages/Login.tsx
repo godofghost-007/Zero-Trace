@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { ArrowRight, KeyRound, LockKeyhole, ShieldCheck, TriangleAlert } from "lucide-react";
+import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 
 export default function Login() {
@@ -8,6 +9,21 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [oidcEnabled, setOidcEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<{ oidcEnabled: boolean }>("/auth/config")
+      .then((config) => {
+        if (active) setOidcEnabled(Boolean(config.oidcEnabled));
+      })
+      .catch(() => {
+        if (active) setOidcEnabled(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -72,6 +88,11 @@ export default function Login() {
             <ArrowRight size={16} />{busy ? "Signing in…" : "Enter console"}
           </button>
         </form>
+        {oidcEnabled && (
+          <a className="button button-secondary login-submit login-sso" href="/api/v1/auth/oidc/login">
+            <KeyRound size={16} />Continue with SSO
+          </a>
+        )}
         <div className="login-foot">
           <span>LOCAL SESSION · HTTPONLY COOKIE</span>
           <span>NO BROWSER-HELD ENGINE KEY</span>

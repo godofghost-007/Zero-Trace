@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import Login from "@/pages/Login";
+import MfaChallenge from "@/pages/MfaChallenge";
 import { useAuth } from "@/lib/auth";
 
 export default function AuthGate({ children }: { children: ReactNode }) {
-  const { user, loading, error, refresh } = useAuth();
+  const { user, loading, error, mfaRequired, refresh } = useAuth();
 
   if (loading) {
     return (
@@ -20,6 +21,9 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         <Login />
       </>
     );
+  }
+  if (mfaRequired) {
+    return <MfaChallenge />;
   }
   return <>{children}</>;
 }

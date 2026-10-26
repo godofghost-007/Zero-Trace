@@ -3,12 +3,20 @@ import { ApiError, apiRequest, setCsrfToken } from "@/lib/api";
 
 export type AuthRole = "viewer" | "operator" | "admin";
 export type AuthUser = { id: string; email: string; role: AuthRole; tenantId: string; active: boolean };
-type AuthSession = { user: AuthUser; csrfToken: string; expiresAt: string | null };
+type AuthSession = {
+  user: AuthUser;
+  csrfToken: string;
+  expiresAt: string | null;
+  mfaRequired?: boolean;
+  mfaVerified?: boolean;
+};
 type AuthContextValue = {
   user: AuthUser | null;
   loading: boolean;
   error: string | null;
+  mfaRequired: boolean;
   login: (email: string, password: string) => Promise<void>;
+  verifyMfa: (code: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -19,9 +27,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [mfaRequired, setMfaRequired] = useState(false);
 
   const clear = useCallback(() => {
     setUser(null);
+    setMfaRequired(false);
     setCsrfToken("");
   }, []);
 
@@ -31,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await apiRequest<AuthSession>("/auth/session");
       setUser(session.user);
       setCsrfToken(session.csrfToken);
+      setMfaRequired(session.mfaVerified === false);
       setError(null);
     } catch (reason) {
       clear();
@@ -56,6 +67,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     setUser(session.user);
     setCsrfToken(session.csrfToken);
+    setMfaRequired(Boolean(session.mfaRequired) || session.mfaVerified === false);
+    setError(null);
+  }, []);
+
+  const verifyMfa = useCallback(async (code: string) => {
+    const result = await apiRequest<{ csrfToken: string }>("/auth/mfa/verify", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+    setCsrfToken(result.csrfToken);
+    setMfaRequired(false);
     setError(null);
   }, []);
 
@@ -68,8 +90,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clear]);
 
   const value = useMemo(
-    () => ({ user, loading, error, login, logout, refresh }),
-    [user, loading, error, login, logout, refresh],
+    () => ({ user, loading, error, mfaRequired, login, verifyMfa, logout, refresh }),
+    [user, loading, error, mfaRequired, login, verifyMfa, logout, refresh],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

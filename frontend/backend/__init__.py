@@ -1,5 +1,6 @@
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from cryptography.fernet import Fernet
@@ -54,6 +55,16 @@ def validate_runtime_config(app: Flask) -> None:
         ):
             if not str(app.config.get(name, "")).strip():
                 problems.append(f"{name} is required when OIDC is enabled")
+        issuer = str(app.config.get("AUTH_OIDC_ISSUER", "")).strip()
+        if issuer:
+            issuer_parts = urlsplit(issuer)
+            if issuer_parts.scheme != "https" and (
+                issuer_parts.hostname or ""
+            ).lower() not in {"127.0.0.1", "localhost", "::1"}:
+                problems.append(
+                    "ZEROTRACE_OIDC_ISSUER must use HTTPS outside a loopback "
+                    "test provider"
+                )
     if app.config.get("METRICS_ENABLED"):
         metrics_token = str(app.config.get("METRICS_TOKEN", "")).strip()
         if len(metrics_token) < 16:
