@@ -518,6 +518,33 @@ class CommandRunner(Protocol):
         ...
 
 
+SAFE_SUBPROCESS_ENV = frozenset({
+    "PATH",
+    "PATHEXT",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "HOME",
+    "USERPROFILE",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+})
+
+
+def scanner_environment() -> dict[str, str]:
+    """Return only the environment a scanner needs, never application secrets."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in SAFE_SUBPROCESS_ENV
+    }
+
+
 class SubprocessRunner:
     def run(self, args: tuple[str, ...], timeout_seconds: int, max_output_bytes: int) -> bytes:
         if not args or any("\x00" in argument for argument in args):
@@ -532,6 +559,7 @@ class SubprocessRunner:
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
             text=False,
+            env=scanner_environment(),
             start_new_session=os.name != "nt",
             creationflags=(
                 subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0

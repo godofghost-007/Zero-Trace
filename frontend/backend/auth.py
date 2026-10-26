@@ -70,6 +70,8 @@ PUBLIC_ENDPOINTS = {
 }
 MFA_ALLOWED_ENDPOINTS = {
     ("GET", "/api/v1/auth/session"),
+    ("POST", "/api/v1/auth/mfa/enroll"),
+    ("POST", "/api/v1/auth/mfa/activate"),
     ("POST", "/api/v1/auth/mfa/verify"),
     ("POST", "/api/v1/auth/logout"),
 }
@@ -131,6 +133,11 @@ def _tenant(value: object | None) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", value):
         raise AuthError("Tenant identifier is invalid.")
     return value
+
+
+def _mfa_policy_required() -> bool:
+    """Tenant-wide policy: every operator must complete MFA before use."""
+    return bool(current_app.config.get("AUTH_MFA_REQUIRED", False))
 
 
 def _mfa_key() -> str:
@@ -233,12 +240,14 @@ def _session_response(
     raw_token: str,
     *,
     mfa_required: bool = False,
+    mfa_enrollment_required: bool = False,
 ):
     response = jsonify({
         "user": _public_user(user),
         "csrfToken": session.csrf_token,
         "expiresAt": session.expires_at.isoformat(),
         "mfaRequired": mfa_required,
+        "mfaEnrollmentRequired": mfa_enrollment_required,
         "mfaVerified": bool(session.mfa_verified),
     })
     return _set_session_cookie(response, session, raw_token)
@@ -370,7 +379,16 @@ def _load_principal() -> bool:
     user = db.session.get(UserAccount, session.user_id)
     if user is None or not user.active or user.tenant_id != session.tenant_id:
         return False
-    if session.last_seen_at is None or (_aware(session.last_seen_at) + timedelta(seconds=60)) <= now:
+    idle_timeout = max(
+        60, int(current_app.config.get("AUTH_IDLE_TIMEOUT_SECONDS", 1800))
+    )
+    if session.last_seen_at is None or (
+        _aware(session.last_seen_at) + timedelta(seconds=idle_timeout)
+    ) <= now:
+        session.revoked_at = now
+        db.session.commit()
+        return False
+    if (_aware(session.last_seen_at) + timedelta(seconds=60)) <= now:
         session.last_seen_at = now
         db.session.commit()
     g.auth_session = session
@@ -608,6 +626,19 @@ def login():
         _record_auth_event("login", "success", user=user)
         return _session_response(user, session, raw_token)
 
+    if _mfa_policy_required():
+        session, raw_token = _create_session(
+            user, auth_method="password", mfa_verified=False
+        )
+        _record_auth_event("login", "mfa_enrollment_required", user=user)
+        return _session_response(
+            user,
+            session,
+            raw_token,
+            mfa_required=True,
+            mfa_enrollment_required=True,
+        )
+
     session, raw_token = _create_session(
         user, auth_method="password", mfa_verified=True
     )
@@ -622,6 +653,9 @@ def session_info():
         return _error("authentication_required", "Sign in to continue.", 401)
     session = getattr(g, "auth_session", None)
     user = db.session.get(UserAccount, principal.subject)
+    enrollment_required = bool(
+        user is not None and not user.mfa_enabled and _mfa_policy_required()
+    )
     return jsonify({
         "user": {
             "id": principal.subject,
@@ -633,6 +667,10 @@ def session_info():
         },
         "csrfToken": session.csrf_token if session else "",
         "expiresAt": session.expires_at.isoformat() if session else None,
+        "mfaRequired": bool(
+            enrollment_required or (session is not None and not session.mfa_verified)
+        ),
+        "mfaEnrollmentRequired": enrollment_required,
         "mfaVerified": bool(session.mfa_verified) if session else False,
         "authMethod": session.auth_method if session else None,
     })
@@ -939,6 +977,117 @@ def reset_user_mfa(user_id: str):
     return jsonify({"ok": True, "mfaEnabled": False})
 
 
+@auth.get("/auth/users/<user_id>/export")
+@role_required("admin")
+def export_user(user_id: str):
+    """Return the account data an operator is entitled to receive."""
+    user = db.session.get(UserAccount, user_id)
+    if user is None or user.tenant_id != g.principal.tenant_id:
+        return _error("user_not_found", "User was not found.", 404)
+    sessions = AuthSession.query.filter_by(user_id=user.id).order_by(
+        AuthSession.created_at.desc()
+    ).all()
+    identities = OidcIdentity.query.filter_by(user_id=user.id).order_by(
+        OidcIdentity.created_at.desc()
+    ).all()
+    resets = PasswordResetToken.query.filter_by(user_id=user.id).order_by(
+        PasswordResetToken.created_at.desc()
+    ).all()
+    audits = AuthAuditEvent.query.filter_by(user_id=user.id).order_by(
+        AuthAuditEvent.created_at.desc()
+    ).all()
+    response = jsonify({
+        "exportedAt": _now().isoformat(),
+        "user": _public_user(user),
+        "sessions": [_public_session(row) for row in sessions],
+        "oidcIdentities": [
+            {
+                "issuer": row.issuer,
+                "subject": row.subject,
+                "email": row.email,
+                "createdAt": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in identities
+        ],
+        "passwordResetTokens": [
+            {
+                "id": row.id,
+                "createdAt": row.created_at.isoformat() if row.created_at else None,
+                "expiresAt": row.expires_at.isoformat() if row.expires_at else None,
+                "usedAt": row.used_at.isoformat() if row.used_at else None,
+            }
+            for row in resets
+        ],
+        "authAuditEvents": [
+            {
+                "eventType": row.event_type,
+                "outcome": row.outcome,
+                "ipAddress": row.ip_address,
+                "userAgent": row.user_agent,
+                "detail": row.detail,
+                "createdAt": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in audits
+        ],
+    })
+    response.headers["Content-Disposition"] = (
+        f'attachment; filename="zerotrace-user-{user.id}.json"'
+    )
+    return response
+
+
+@auth.delete("/auth/users/<user_id>")
+@role_required("admin")
+def erase_user(user_id: str):
+    """Erase an account while retaining a minimal security audit trail."""
+    user = db.session.get(UserAccount, user_id)
+    if user is None or user.tenant_id != g.principal.tenant_id:
+        return _error("user_not_found", "User was not found.", 404)
+    if user.id == g.principal.subject:
+        return _error(
+            "cannot_erase_self",
+            "Use another administrator account to erase this account.",
+            409,
+        )
+    if user.role == "admin" and user.active:
+        other_admins = UserAccount.query.filter(
+            UserAccount.tenant_id == user.tenant_id,
+            UserAccount.role == "admin",
+            UserAccount.active.is_(True),
+            UserAccount.id != user.id,
+        ).count()
+        if other_admins == 0:
+            return _error(
+                "last_admin",
+                "The last active administrator cannot be erased.",
+                409,
+            )
+
+    AuthSession.query.filter_by(user_id=user.id).delete(
+        synchronize_session=False
+    )
+    PasswordResetToken.query.filter_by(user_id=user.id).delete(
+        synchronize_session=False
+    )
+    OidcIdentity.query.filter_by(user_id=user.id).delete(
+        synchronize_session=False
+    )
+    # Keep the security event sequence but remove direct identifiers.
+    AuthAuditEvent.query.filter_by(user_id=user.id).update(
+        {
+            "user_id": None,
+            "ip_address": None,
+            "user_agent": None,
+            "detail": "account_erased",
+        },
+        synchronize_session=False,
+    )
+    db.session.delete(user)
+    db.session.commit()
+    _record_auth_event("user_erasure", "success", detail="account_erased")
+    return jsonify({"ok": True, "erasedUserId": user_id})
+
+
 @auth.get("/auth/oidc/login")
 def oidc_login():
     if not current_app.config.get("AUTH_OIDC_READY"):
@@ -1052,17 +1201,18 @@ def oidc_callback():
     if user is None or not user.active:
         _record_auth_event("oidc_login", "inactive", user=user)
         return _error("account_inactive", "This account is not active.", 403)
+    mfa_verified = not (user.mfa_enabled or _mfa_policy_required())
     session, raw_token = _create_session(
         user,
         auth_method="oidc",
-        mfa_verified=not user.mfa_enabled,
+        mfa_verified=mfa_verified,
     )
     _record_auth_event(
         "oidc_login",
-        "mfa_pending" if user.mfa_enabled else "success",
+        "success" if mfa_verified else "mfa_pending",
         user=user,
     )
-    target = "/" if not user.mfa_enabled else "/?mfa=required"
+    target = "/" if mfa_verified else "/?mfa=required"
     response = redirect(target)
     return _set_session_cookie(response, session, raw_token)
 

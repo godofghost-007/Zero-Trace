@@ -321,6 +321,7 @@ class PostgresLiveStore:
         idempotency: dict[str, tuple[str, str]],
         findings: Iterable[ServiceFinding] = (),
         uncertain_matches: Iterable[UncertainMatch] = (),
+        nvd_checkpoint: str | None = None,
     ) -> None:
         fact_rows = [
             (fact.cve_id, _json(fact_to_dict(fact))) for fact in facts
@@ -363,6 +364,10 @@ class PostgresLiveStore:
                 "state": value.state,
                 "fact_count": value.fact_count,
                 "error": value.error,
+                "checkpoint": value.checkpoint,
+                "truncated": value.truncated,
+                "total_results": value.total_results,
+                "pages": value.pages,
             }
             for key, value in ingestions.items()
         }
@@ -396,6 +401,7 @@ class PostgresLiveStore:
                 ("kev", kev_rows),
                 ("ingestions", ingestion_rows),
                 ("idempotency", idempotency),
+                ("nvd_checkpoint", nvd_checkpoint),
             ):
                 connection.execute(
                     """
@@ -456,6 +462,16 @@ class PostgresLiveStore:
                 state=str(item["state"]),
                 fact_count=int(item["fact_count"]),
                 error=item.get("error"),
+                checkpoint=(
+                    None if item.get("checkpoint") is None else str(item["checkpoint"])
+                ),
+                truncated=bool(item.get("truncated", False)),
+                total_results=(
+                    None
+                    if item.get("total_results") is None
+                    else int(item["total_results"])
+                ),
+                pages=int(item.get("pages", 0)),
             )
             for key, item in meta.get("ingestions", {}).items()
         }
@@ -471,6 +487,7 @@ class PostgresLiveStore:
             "idempotency": idempotency,
             "findings": findings,
             "uncertain_matches": uncertain_matches,
+            "nvd_checkpoint": meta.get("nvd_checkpoint"),
         }
 
     # -- scheduled intel ------------------------------------------------

@@ -117,6 +117,59 @@ class IntelModelTests(unittest.TestCase):
         ambiguous = self._fact(cpe_names=(), summary="same product")
         self.assertIsNone(match_service(service, ambiguous))
 
+    def test_wildcard_cpe_matches_an_observed_version(self) -> None:
+        service = ServiceDescriptor(
+            "service-1",
+            "asset-1",
+            "widget",
+            "acme",
+            "1.5.0",
+            "cpe:2.3:a:acme:widget:1.5.0:*:*:*:*:*:*:*",
+            True,
+        )
+        fact = self._fact(
+            cpe_names=("cpe:2.3:a:acme:widget:*:*:*:*:*:*:*:*",)
+        )
+
+        outcome = correlate_service(
+            service, fact, now=datetime(2024, 1, 4, tzinfo=timezone.utc)
+        )
+
+        self.assertIsNotNone(outcome.finding)
+        self.assertEqual(outcome.finding.match_method, "cpe_wildcard")
+        self.assertEqual(outcome.finding.confidence, 0.95)
+
+    def test_cpe_version_range_matches_numeric_bounds(self) -> None:
+        service = ServiceDescriptor(
+            "service-1",
+            "asset-1",
+            "widget",
+            "acme",
+            "1.9.5",
+            "cpe:2.3:a:acme:widget:1.9.5:*:*:*:*:*:*:*",
+            True,
+        )
+        fact = self._fact(
+            cpe_names=("cpe:2.3:a:acme:widget:1.2.0:*:*:*:*:*:*:*",),
+            cpe_ranges=(
+                (
+                    "cpe:2.3:a:acme:widget:1.2.0:*:*:*:*:*:*:*",
+                    "1.0.0",
+                    None,
+                    None,
+                    "1.10.0",
+                ),
+            ),
+        )
+
+        outcome = correlate_service(
+            service, fact, now=datetime(2024, 1, 4, tzinfo=timezone.utc)
+        )
+
+        self.assertIsNotNone(outcome.finding)
+        self.assertEqual(outcome.finding.match_method, "cpe_version_range")
+        self.assertIn("1.10.0", outcome.finding.evidence[0])
+
     def test_unique_fallback_match_is_confirmed(self) -> None:
         service = ServiceDescriptor(
             "service-1", "asset-1", "widget", "acme", "1.2.3", None, True

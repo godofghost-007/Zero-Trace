@@ -58,10 +58,20 @@ def test_live_runtime_migration_rolls_back_and_reapplies():
                 "SELECT to_regclass('public.live_scopes')"
             ).fetchone()[0] == "live_scopes"
             assert connection.execute(
+                "SELECT to_regclass('public.user_accounts')"
+            ).fetchone()[0] == "user_accounts"
+            assert connection.execute(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version = %s",
                 ("0007_live_runtime",),
             ).fetchone()[0] == 1
+            assert connection.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_name = 'intel_vulnerability_facts' "
+                "AND column_name = 'cpe_ranges'"
+            ).fetchone()[0] == 1
 
+        assert rollback_latest(target_url) == "0011_intel_cpe_ranges"
+        assert rollback_latest(target_url) == "0010_bff_operational"
         assert rollback_latest(target_url) == "0009_scan_schedules"
         assert rollback_latest(target_url) == "0008_identity_hardening"
         assert rollback_latest(target_url) == "0007_live_runtime"
@@ -69,6 +79,9 @@ def test_live_runtime_migration_rolls_back_and_reapplies():
         with _connect(target_url) as connection:
             assert connection.execute(
                 "SELECT to_regclass('public.live_scopes')"
+            ).fetchone()[0] is None
+            assert connection.execute(
+                "SELECT to_regclass('public.user_accounts')"
             ).fetchone()[0] is None
             assert connection.execute(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version = %s",
@@ -80,6 +93,9 @@ def test_live_runtime_migration_rolls_back_and_reapplies():
             assert connection.execute(
                 "SELECT to_regclass('public.live_scopes')"
             ).fetchone()[0] == "live_scopes"
+            assert connection.execute(
+                "SELECT to_regclass('public.user_accounts')"
+            ).fetchone()[0] == "user_accounts"
     finally:
         with _connect(admin_url, autocommit=True) as connection:
             connection.execute(f'DROP DATABASE IF EXISTS "{database}" WITH (FORCE)')

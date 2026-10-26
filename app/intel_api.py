@@ -53,6 +53,10 @@ class Ingestion:
     state: str
     fact_count: int
     error: str | None = None
+    checkpoint: str | None = None
+    truncated: bool = False
+    total_results: int | None = None
+    pages: int = 0
 
 
 class InMemoryIntelRepository:
@@ -65,6 +69,7 @@ class InMemoryIntelRepository:
         self.kev_records = ()
         self.ingestions: dict[str, Ingestion] = {}
         self.idempotency: dict[str, tuple[str, str]] = {}
+        self.nvd_checkpoint: str | None = None
         self.on_change: Callable[[], None] | None = None
 
     def add_service(self, service: ServiceDescriptor) -> None:
@@ -80,6 +85,7 @@ class InMemoryIntelRepository:
         idempotency: dict[str, tuple[str, str]] | None = None,
         findings: tuple[ServiceFinding, ...] = (),
         uncertain_matches: tuple[UncertainMatch, ...] = (),
+        nvd_checkpoint: str | None = None,
     ) -> None:
         """Restore a previously persisted feed snapshot."""
 
@@ -88,6 +94,7 @@ class InMemoryIntelRepository:
         self.kev_records = tuple(kev_records)
         self.ingestions = dict(ingestions or {})
         self.idempotency = dict(idempotency or {})
+        self.nvd_checkpoint = nvd_checkpoint
         self.findings = {
             f"{finding.service_id}:{finding.cve_id}": finding
             for finding in findings
@@ -139,10 +146,15 @@ def ingest_source(
             raise FeedError("idempotency key was reused with a different request")
         return repository.ingestions[existing[1]]
     ingestion_id = str(uuid4())
+    checkpoint: str | None = None
+    truncated = False
+    total_results: int | None = None
+    pages = 0
     try:
         if source == "nvd":
             sync_result = sync_nvd(
                 transport,
+                start_index=int(repository.nvd_checkpoint or 0),
                 retrieved_at=retrieved_at or datetime.now(timezone.utc),
                 last_known_good=tuple(repository.facts.values()),
             )
@@ -160,7 +172,22 @@ def ingest_source(
                             f"{service.service_id}:{fact.cve_id}"
                         ] = finding
             count = len(facts)
+            if sync_result.state == "degraded":
+                state = "degraded"
+            elif sync_result.truncated:
+                state = "truncated"
+            else:
+                state = "completed"
+            if sync_result.state != "degraded":
+                repository.nvd_checkpoint = (
+                    sync_result.checkpoint if sync_result.truncated else None
+                )
+            checkpoint = sync_result.checkpoint
+            truncated = sync_result.truncated
+            total_results = sync_result.total_results
+            pages = sync_result.pages
         else:
+            state = "completed"
             if source == "epss":
                 repository.epss_records = sync_epss(transport)
                 facts = merge_intel_signals(
@@ -180,7 +207,17 @@ def ingest_source(
                 )
                 repository.facts = {fact.cve_id: fact for fact in facts}
                 count = len(repository.kev_records)
-        ingestion = Ingestion(ingestion_id, source, "completed", count)
+        ingestion = Ingestion(
+            ingestion_id,
+            source,
+            state,
+            count,
+            None,
+            checkpoint,
+            truncated,
+            total_results,
+            pages,
+        )
     except FeedError as error:
         ingestion = Ingestion(ingestion_id, source, "failed", 0, str(error))
     repository.ingestions[ingestion_id] = ingestion
@@ -260,6 +297,7 @@ def create_intel_app(
             "services": len(repository.services),
             "kevRecords": len(repository.kev_records),
             "epssRecords": len(repository.epss_records),
+            "nvdCheckpoint": repository.nvd_checkpoint,
             "feeds": {
                 "nvd": NVD_ENDPOINT,
                 "epss": EPSS_ENDPOINT,

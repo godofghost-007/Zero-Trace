@@ -28,6 +28,8 @@ class MigrationTests(unittest.TestCase):
                 "0007_live_runtime",
                 "0008_identity_hardening",
                 "0009_scan_schedules",
+                "0010_bff_operational",
+                "0011_intel_cpe_ranges",
             ],
         )
         self.assertIn("processed_events", sql)
@@ -85,3 +87,25 @@ class MigrationTests(unittest.TestCase):
         self.assertIn("mfa_enabled", sql)
         self.assertIn("mfa_verified", sql)
         self.assertIn("auth_method", sql)
+
+    def test_bff_operational_migration_defines_bff_tables(self) -> None:
+        sql = "\n".join(migration_statements())
+
+        for table in (
+            "user_accounts",
+            "auth_sessions",
+            "password_reset_tokens",
+            "oidc_identities",
+            "auth_audit_events",
+            "assets",
+            "vulnerabilities",
+            "scan_runs",
+            "service_vulnerabilities",
+            "patch_proposals",
+            "guard_events",
+            "score_snapshots",
+            "demo_event_outbox",
+        ):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("ix_user_accounts_email", sql)
+        self.assertIn("ix_auth_sessions_token_hash", sql)

@@ -263,6 +263,10 @@ def create_app(test_config: dict | None = None) -> Flask:
             migrate_legacy_event_outbox()
 
             initialize_demo_state()
-        bootstrap_admin(app)
+    # Production runs with AUTO_CREATE_SCHEMA=false after the versioned
+    # migrations have created the BFF tables. Bootstrap the operator account in
+    # both modes; if the tables are missing this fails closed instead of
+    # silently starting with an unusable identity store.
+    bootstrap_admin(app)
 
     return app

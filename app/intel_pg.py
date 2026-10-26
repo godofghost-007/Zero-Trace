@@ -114,10 +114,10 @@ class PostgresIntelRepository:
                     """
                     INSERT INTO intel_vulnerability_facts
                         (fact_id, cve_id, source, source_record_id, source_revision,
-                         summary, cpe_names, cvss_score, epss_score, kev,
+                         summary, cpe_names, cpe_ranges, cvss_score, epss_score, kev,
                          published_at, modified_at, retrieved_at, schema_version,
                          payload_digest)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s,
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s,
                             %s, %s, %s, %s, %s)
                     ON CONFLICT (source, source_record_id, source_revision)
                     DO NOTHING
@@ -125,6 +125,7 @@ class PostgresIntelRepository:
                     (
                         fact_id, fact.cve_id, fact.source, fact.source_record_id,
                         fact.source_revision, fact.summary, json.dumps(fact.cpe_names),
+                        json.dumps([list(item) for item in fact.cpe_ranges]),
                         fact.cvss_score, fact.epss_score, fact.kev,
                         fact.published_at, fact.modified_at, fact.retrieved_at,
                         fact.schema_version, fact.payload_digest,

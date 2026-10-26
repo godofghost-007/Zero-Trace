@@ -18,6 +18,9 @@ Optional:
 * ``ZEROTRACE_GUARD_ALLOWED_MODELS`` - comma-separated model IDs; empty allows
   any model on the allowlisted provider.
 * ``ZEROTRACE_GUARD_PII_ACTION`` - ``block`` (default) or ``redact``.
+* ``ZEROTRACE_GUARD_DETECTOR_URL`` - optional external classifier endpoint.
+* ``ZEROTRACE_GUARD_DETECTOR_API_KEY`` - optional external classifier key.
+* ``ZEROTRACE_GUARD_DETECTOR_TIMEOUT_SECONDS`` - external classifier timeout.
 * ``ZEROTRACE_GUARD_HOST`` / ``ZEROTRACE_GUARD_PORT`` - must be loopback.
 * ``ZEROTRACE_GUARD_AUDIT_LOG`` - optional JSON-lines audit file.
 """
@@ -36,6 +39,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.guard import GuardConfig, create_guard_app  # noqa: E402
+from app.guard_detector import (  # noqa: E402
+    ExternalDetectorConfig,
+    HttpExternalDetector,
+)
 from app.guard_transport import HttpGuardTransport  # noqa: E402
 from app.security import Principal  # noqa: E402
 from app.settings import env_or_file  # noqa: E402
@@ -114,6 +121,26 @@ def main() -> int:
         provider_api_key=provider_key,
         upstream_allowlist=allowlist,
     )
+    detector = None
+    detector_url = env_or_file("ZEROTRACE_GUARD_DETECTOR_URL")
+    if detector_url:
+        try:
+            detector_timeout = int(
+                os.environ.get("ZEROTRACE_GUARD_DETECTOR_TIMEOUT_SECONDS", "5")
+            )
+        except ValueError:
+            print(
+                "ZEROTRACE_GUARD_DETECTOR_TIMEOUT_SECONDS must be an integer",
+                file=sys.stderr,
+            )
+            return 2
+        detector = HttpExternalDetector(
+            ExternalDetectorConfig(
+                url=detector_url,
+                api_key=env_or_file("ZEROTRACE_GUARD_DETECTOR_API_KEY"),
+                timeout_seconds=detector_timeout,
+            )
+        )
     app = create_guard_app(
         config=config,
         transport=transport,
@@ -121,6 +148,7 @@ def main() -> int:
         event_publisher=_audit_publisher(
             os.environ.get("ZEROTRACE_GUARD_AUDIT_LOG")
         ),
+        detector=detector,
     )
     uvicorn.run(app, host=host, port=port, log_level="info", access_log=False)
     return 0

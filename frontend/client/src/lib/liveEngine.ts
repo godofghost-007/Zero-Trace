@@ -33,7 +33,9 @@ export type EngineStatus = {
     uncertainMatches: number;
     kevRecords?: number;
     epssRecords?: number;
+    nvdCheckpoint?: string | null;
     feeds: Record<string, string>;
+    schedule?: IntelSchedule;
   };
   guard: {
     mode: string;
@@ -49,6 +51,25 @@ export type EngineStatus = {
     coverage: number;
     status: string;
   };
+};
+
+export type IntelFeedSchedule = {
+  source: string;
+  state: string;
+  lastStarted: string | null;
+  lastCompleted: string | null;
+  lastError: string | null;
+  lastFactCount: number;
+  runs: number;
+  nextRun: string | null;
+  intervalSeconds: number;
+};
+
+export type IntelSchedule = {
+  enabled: boolean;
+  running: boolean;
+  initialDelaySeconds: number;
+  feeds: Record<string, IntelFeedSchedule>;
 };
 
 export type Readiness = {

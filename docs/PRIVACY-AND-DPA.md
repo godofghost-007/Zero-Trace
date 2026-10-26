@@ -54,10 +54,18 @@ data through Guard unless the provider's terms and the operator's DPA allow it.
   file instead.
 - Backups are pruned with `python -m scripts.backup_database prune`. The newest
   copies are always retained.
-- Account deletion is an operator procedure: disable the account, revoke
-  sessions, remove OIDC identities and reset tokens, then delete the account
-  row after the audit retention period. The current UI does not expose a
-  one-click erasure flow.
+- Administrators can export an account with
+  `GET /api/v1/auth/users/<user_id>/export`. The JSON attachment contains the
+  account, sessions, OIDC links, reset-token metadata, and auth audit events,
+  but never password, MFA-secret, or token hashes.
+- Administrators can erase an account with
+  `DELETE /api/v1/auth/users/<user_id>`. Sessions, reset tokens, and OIDC
+  identities are deleted; auth audit rows are retained with direct identifiers
+  cleared. Erasure is blocked for the requesting administrator and for the last
+  active administrator in a tenant.
+- `ZEROTRACE_IDLE_TIMEOUT_SECONDS` revokes inactive sessions. Set
+  `ZEROTRACE_MFA_REQUIRED=true` to require TOTP enrollment for every tenant
+  user before console access.
 
 ## Guard and model providers
 
@@ -96,9 +104,11 @@ List these in the operator's own DPA and privacy notice.
 - [ ] Record the security measures: TLS, MFA, RBAC, audit, encryption at rest,
       encrypted backups, and loopback-only engine access.
 
+A controller-to-processor template is in `docs/DPA-TEMPLATE.md`. Complete every
+bracketed field and have counsel review it.
+
 ## Honest gaps
 
-- No automated data-subject export or erasure endpoint.
 - No per-tenant isolation, so a multi-tenant DPA is out of scope for v1.
 - No live DPA or legal template was reviewed by counsel.
 - No production deployment has exercised the retention job against a real

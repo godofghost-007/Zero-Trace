@@ -1,8 +1,10 @@
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 import json
 import time
 from typing import Callable, Mapping, Protocol
+from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.parse import urlsplit
 
@@ -31,6 +33,26 @@ class FeedResponse:
 class FeedTransport(Protocol):
     def get(self, endpoint: str) -> FeedResponse:
         ...
+
+
+def _retry_after_seconds(value: str, *, now: datetime | None = None) -> float | None:
+    """Accept both delta-seconds and HTTP-date forms of Retry-After."""
+
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    try:
+        return max(0.0, float(cleaned))
+    except ValueError:
+        pass
+    try:
+        parsed = parsedate_to_datetime(cleaned)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return max(0.0, (parsed - current).total_seconds())
 
 
 class RetryingFeedTransport:
@@ -63,11 +85,21 @@ class RetryingFeedTransport:
                 return response
             if attempt + 1 == self.max_attempts:
                 raise FeedError("feed source remained unavailable")
-            retry_after = response.headers.get("Retry-After", "")
-            try:
-                delay = min(self.max_retry_seconds, max(0.0, float(retry_after)))
-            except ValueError:
-                delay = min(self.max_retry_seconds, 2.0 ** attempt)
+            retry_after = _retry_after_seconds(
+                next(
+                    (
+                        value
+                        for key, value in response.headers.items()
+                        if key.lower() == "retry-after"
+                    ),
+                    "",
+                )
+            )
+            delay = (
+                min(self.max_retry_seconds, retry_after)
+                if retry_after is not None
+                else min(self.max_retry_seconds, 2.0 ** attempt)
+            )
             self.sleep(delay)
         raise FeedError("feed source could not be retrieved")
 
@@ -109,6 +141,18 @@ class UrllibFeedTransport:
                 if len(body) > self.max_bytes:
                     raise FeedError("feed response is too large")
                 return FeedResponse(response.status, dict(response.headers.items()), body)
+        except HTTPError as error:
+            # Return retryable status codes to RetryingFeedTransport so it can
+            # honor Retry-After. Non-retryable errors are rejected by the feed
+            # parser after the bounded body read.
+            try:
+                body = error.read(self.max_bytes + 1)
+            except Exception:
+                body = b""
+            if len(body) > self.max_bytes:
+                raise FeedError("feed response is too large") from error
+            headers = dict(error.headers.items()) if error.headers else {}
+            return FeedResponse(error.code, headers, body)
         except FeedError:
             raise
         except Exception as error:
@@ -136,20 +180,30 @@ class NvdFeed:
         entries = payload.get("vulnerabilities")
         if not isinstance(entries, list) or len(entries) > 20_000:
             raise FeedError("NVD response shape is invalid")
-        digest = payload_digest(body)
         facts: list[VulnerabilityFact] = []
         for entry in entries:
             try:
-                facts.append(_parse_nvd_record(entry, retrieved_at, digest))
+                facts.append(_parse_nvd_record(entry, retrieved_at))
             except (KeyError, IndexError, TypeError, ValueError, IntelError) as error:
                 raise FeedError("NVD record is invalid") from error
         return tuple(facts)
 
 
+def _nvd_record_digest(entry: object) -> str:
+    """Hash one NVD record, not the page that happened to contain it."""
+
+    canonical = json.dumps(
+        entry,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return payload_digest(canonical)
+
+
 def _parse_nvd_record(
     entry: object,
     retrieved_at: datetime,
-    digest: str,
 ) -> VulnerabilityFact:
     if not isinstance(entry, dict):
         raise TypeError("NVD record must be an object")
@@ -160,20 +214,41 @@ def _parse_nvd_record(
         if item.get("lang") == "en"
     )
     configurations = cve.get("configurations", [])
-    first_configuration = configurations[0] if configurations else {}
-    cpes = tuple(
-        match["criteria"]
-        for node in first_configuration.get("nodes", [])
-        for match in node.get("cpeMatch", [])
-        if match.get("vulnerable") is True
-    )
+    cpe_names: list[str] = []
+    cpe_ranges: list[
+        tuple[str, str | None, str | None, str | None, str | None]
+    ] = []
+    for configuration in configurations:
+        if not isinstance(configuration, dict):
+            continue
+        for node in configuration.get("nodes", []):
+            if not isinstance(node, dict):
+                continue
+            for match in node.get("cpeMatch", []):
+                if not isinstance(match, dict) or match.get("vulnerable") is not True:
+                    continue
+                criteria = match.get("criteria")
+                if not isinstance(criteria, str):
+                    raise TypeError("CPE criteria must be a string")
+                normalized = normalize_cpe(criteria)
+                cpe_names.append(normalized)
+                bounds = (
+                    match.get("versionStartIncluding"),
+                    match.get("versionStartExcluding"),
+                    match.get("versionEndIncluding"),
+                    match.get("versionEndExcluding"),
+                )
+                if any(value is not None for value in bounds):
+                    cpe_ranges.append((normalized, *bounds))
     score = _nvd_score(cve.get("metrics", {}))
     published = _timestamp(cve.get("published"))
     modified = _timestamp(cve.get("lastModified"))
     return VulnerabilityFact(
         cve_id, "nvd", cve_id, modified.isoformat(),
-        summary, tuple(normalize_cpe(cpe) for cpe in cpes),
-        score, None, None, published, modified, retrieved_at, 1, digest,
+        summary, tuple(dict.fromkeys(cpe_names)),
+        score, None, None, published, modified, retrieved_at, 1,
+        _nvd_record_digest(entry),
+        cpe_ranges=tuple(dict.fromkeys(cpe_ranges)),
     )
 
 
@@ -192,6 +267,9 @@ class NvdSyncResult:
     next_start_index: int
     state: str
     checkpoint: str | None = None
+    truncated: bool = False
+    total_results: int | None = None
+    pages: int = 0
 
 
 def sync_nvd(
@@ -206,41 +284,89 @@ def sync_nvd(
     if not 1 <= page_size <= 2_000 or start_index < 0 or max_pages < 1:
         raise ValueError("NVD pagination bounds are invalid")
     retrieval_time = retrieved_at or datetime.now(timezone.utc)
-    facts: list[VulnerabilityFact] = []
+    facts_by_cve: dict[str, VulnerabilityFact] = {}
     quarantined: list[str] = []
+    quarantined_seen: set[str] = set()
     current = start_index
     checkpoint: str | None = None
+    total_results: int | None = None
+    pages = 0
+    truncated = False
+
+    def quarantine(entry: object) -> None:
+        identifier = _quarantine_identifier(entry)
+        if identifier not in quarantined_seen:
+            quarantined_seen.add(identifier)
+            quarantined.append(identifier)
+
     try:
         for _ in range(max_pages):
             endpoint = f"{NVD_ENDPOINT}?startIndex={current}&resultsPerPage={page_size}"
             response = transport.get(endpoint)
+            if response.status != 200:
+                raise FeedError("NVD feed source returned an error")
             payload = _json_object(response.body)
             entries = payload.get("vulnerabilities")
             total = payload.get("totalResults")
             if isinstance(entries, list) and "totalResults" not in payload:
+                for fact in NvdFeed().parse(
+                    response.body, retrieved_at=retrieval_time
+                ):
+                    facts_by_cve[fact.cve_id] = fact
+                current += len(entries)
+                pages += 1
+                checkpoint = str(current)
                 return NvdSyncResult(
-                    NvdFeed().parse(response.body, retrieved_at=retrieval_time),
-                    (),
-                    len(entries),
+                    tuple(facts_by_cve.values()),
+                    tuple(quarantined),
+                    current,
                     "fresh",
+                    checkpoint,
+                    False,
                     None,
+                    pages,
                 )
             if not isinstance(entries, list) or not isinstance(total, int):
                 raise FeedError("NVD pagination metadata is invalid")
-            digest = payload_digest(response.body)
+            total_results = total
             for entry in entries:
                 try:
-                    facts.append(_parse_nvd_record(entry, retrieval_time, digest))
+                    fact = _parse_nvd_record(entry, retrieval_time)
                 except (KeyError, IndexError, TypeError, ValueError, IntelError):
-                    quarantined.append(_quarantine_identifier(entry))
+                    quarantine(entry)
+                    continue
+                facts_by_cve[fact.cve_id] = fact
             current += len(entries)
+            pages += 1
             checkpoint = str(current)
             if current >= total or not entries:
                 break
-        return NvdSyncResult(tuple(facts), tuple(quarantined), current, "fresh", checkpoint)
+        else:
+            truncated = True
+        if total_results is not None and current < total_results:
+            truncated = True
+        return NvdSyncResult(
+            tuple(facts_by_cve.values()),
+            tuple(quarantined),
+            current,
+            "truncated" if truncated else "fresh",
+            checkpoint,
+            truncated,
+            total_results,
+            pages,
+        )
     except FeedError:
         if last_known_good:
-            return NvdSyncResult(last_known_good, tuple(quarantined), current, "degraded", checkpoint)
+            return NvdSyncResult(
+                last_known_good,
+                tuple(quarantined),
+                current,
+                "degraded",
+                checkpoint,
+                False,
+                total_results,
+                pages,
+            )
         raise
 
 
@@ -299,12 +425,14 @@ def sync_epss(
 
     if not 1 <= page_size <= EPSS_PAGE_SIZE or max_pages < 1:
         raise ValueError("EPSS pagination bounds are invalid")
-    records: list[EpssRecord] = []
+    records_by_cve: dict[str, EpssRecord] = {}
     offset = 0
     total: int | None = None
     for _ in range(max_pages):
         endpoint = f"{EPSS_ENDPOINT}?limit={page_size}&offset={offset}"
         response = transport.get(endpoint)
+        if response.status != 200:
+            raise FeedError("EPSS feed source returned an error")
         payload = _json_object(response.body)
         entries = payload.get("data")
         if not isinstance(entries, list) or len(entries) > page_size:
@@ -312,7 +440,8 @@ def sync_epss(
         page_total = payload.get("total")
         if isinstance(page_total, int) and page_total >= 0:
             total = page_total
-        records.extend(EpssFeed().parse(response.body))
+        for record in EpssFeed().parse(response.body):
+            records_by_cve[record.cve_id] = record
         offset += len(entries)
         if not entries:
             break
@@ -322,9 +451,9 @@ def sync_epss(
             break
     else:
         raise FeedError("EPSS pagination exceeded the bounded page count")
-    if total is not None and len(records) < total:
+    if total is not None and len(records_by_cve) < total:
         raise FeedError("EPSS response was incomplete")
-    return tuple(records)
+    return tuple(records_by_cve.values())
 
 
 class KevFeed:

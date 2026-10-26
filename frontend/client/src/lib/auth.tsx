@@ -2,12 +2,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { ApiError, apiRequest, setCsrfToken } from "@/lib/api";
 
 export type AuthRole = "viewer" | "operator" | "admin";
-export type AuthUser = { id: string; email: string; role: AuthRole; tenantId: string; active: boolean };
+export type AuthUser = { id: string; email: string; role: AuthRole; tenantId: string; active: boolean; mfaEnabled?: boolean };
 type AuthSession = {
   user: AuthUser;
   csrfToken: string;
   expiresAt: string | null;
   mfaRequired?: boolean;
+  mfaEnrollmentRequired?: boolean;
   mfaVerified?: boolean;
 };
 type AuthContextValue = {
@@ -15,8 +16,11 @@ type AuthContextValue = {
   loading: boolean;
   error: string | null;
   mfaRequired: boolean;
+  mfaEnrollmentRequired: boolean;
   login: (email: string, password: string) => Promise<void>;
   verifyMfa: (code: string) => Promise<void>;
+  startMfaEnrollment: () => Promise<{ secret: string; otpauthUri: string }>;
+  activateMfa: (code: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 };
@@ -28,10 +32,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaEnrollmentRequired, setMfaEnrollmentRequired] = useState(false);
 
   const clear = useCallback(() => {
     setUser(null);
     setMfaRequired(false);
+    setMfaEnrollmentRequired(false);
     setCsrfToken("");
   }, []);
 
@@ -41,7 +47,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await apiRequest<AuthSession>("/auth/session", { signal: AbortSignal.timeout(10_000) });
       setUser(session.user);
       setCsrfToken(session.csrfToken);
-      setMfaRequired(session.mfaVerified === false);
+      setMfaRequired(
+        Boolean(session.mfaRequired)
+        || session.mfaVerified === false
+        || Boolean(session.mfaEnrollmentRequired),
+      );
+      setMfaEnrollmentRequired(Boolean(session.mfaEnrollmentRequired));
       setError(null);
     } catch (reason) {
       clear();
@@ -68,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(session.user);
     setCsrfToken(session.csrfToken);
     setMfaRequired(Boolean(session.mfaRequired) || session.mfaVerified === false);
+    setMfaEnrollmentRequired(Boolean(session.mfaEnrollmentRequired));
     setError(null);
   }, []);
 
@@ -78,6 +90,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     setCsrfToken(result.csrfToken);
     setMfaRequired(false);
+    setMfaEnrollmentRequired(false);
+    setError(null);
+  }, []);
+
+  const startMfaEnrollment = useCallback(async () => {
+    return apiRequest<{ secret: string; otpauthUri: string }>("/auth/mfa/enroll", {
+      method: "POST",
+      body: "{}",
+    });
+  }, []);
+
+  const activateMfa = useCallback(async (code: string) => {
+    await apiRequest("/auth/mfa/activate", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    });
+    setUser((current) => current ? { ...current, mfaEnabled: true } : current);
+    setMfaRequired(false);
+    setMfaEnrollmentRequired(false);
     setError(null);
   }, []);
 
@@ -90,8 +121,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clear]);
 
   const value = useMemo(
-    () => ({ user, loading, error, mfaRequired, login, verifyMfa, logout, refresh }),
-    [user, loading, error, mfaRequired, login, verifyMfa, logout, refresh],
+    () => ({
+      user,
+      loading,
+      error,
+      mfaRequired,
+      mfaEnrollmentRequired,
+      login,
+      verifyMfa,
+      startMfaEnrollment,
+      activateMfa,
+      logout,
+      refresh,
+    }),
+    [
+      user,
+      loading,
+      error,
+      mfaRequired,
+      mfaEnrollmentRequired,
+      login,
+      verifyMfa,
+      startMfaEnrollment,
+      activateMfa,
+      logout,
+      refresh,
+    ],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -41,6 +41,9 @@ ZEROTRACE_ENV=production
 FLASK_SECRET_KEY=<64+ random characters>
 DATABASE_URL=postgresql://...@...pooler.supabase.com:6543/postgres
 ZEROTRACE_COOKIE_SECURE=true
+ZEROTRACE_IDLE_TIMEOUT_SECONDS=1800
+# Set true to require TOTP enrollment and verification for every tenant user.
+ZEROTRACE_MFA_REQUIRED=false
 AUTO_CREATE_SCHEMA=false
 DEMO_MODE=false
 ZEROTRACE_MFA_ENCRYPTION_KEY=<Fernet key>
@@ -56,6 +59,15 @@ ZEROTRACE_GUARD_BFF_API_KEY=<generated BFF-to-Guard key>
 
 Guard provider secrets live in a separate `.env.guard` file copied from
 `deploy/guard.env.example`. The BFF and engine do not receive that file.
+
+Guard uses the built-in deterministic detector by default. Set
+`ZEROTRACE_GUARD_DETECTOR_URL` to an HTTPS classifier that accepts
+`{"text": "..."}` and returns `{"blocked": true|false, "reason": "..."}` to use
+an external detector; failures are fail-closed. Run
+`python -m scripts.evaluate_guard --mode live --model <model>` only after a
+provider is configured and the Guard key is available in
+`ZEROTRACE_GUARD_BFF_API_KEY`. See `deploy/GUARD-EGRESS.md` for the egress
+boundary.
 
 ### Secret files
 
@@ -84,6 +96,13 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 Do not commit `.env.production`. The production startup check fails closed if
 the secret key, PostgreSQL URL, secure cookies, schema auto-creation, demo mode,
 MFA key, or OIDC credentials are unsafe.
+
+The BFF runs with `AUTO_CREATE_SCHEMA=false`; migration `0010_bff_operational`
+creates its operational tables. Sessions are bounded by both
+`ZEROTRACE_SESSION_TTL_SECONDS` and `ZEROTRACE_IDLE_TIMEOUT_SECONDS` (minimum
+60 seconds). With `ZEROTRACE_MFA_REQUIRED=true`, a user without MFA is signed
+in to the enrollment screen only and cannot reach the console until TOTP
+activation succeeds.
 
 ## 4. Migrations
 

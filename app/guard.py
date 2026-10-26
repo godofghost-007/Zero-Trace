@@ -59,6 +59,13 @@ class GuardTransport(Protocol):
         ...
 
 
+class GuardDetector(Protocol):
+    """Adapter boundary for built-in or external prompt classifiers."""
+
+    def scan(self, text: str) -> "DetectionResult":
+        ...
+
+
 @dataclass(frozen=True)
 class GuardConfig:
     """Immutable Guard configuration.
@@ -382,6 +389,7 @@ def create_guard_app(
     transport: GuardTransport,
     principal_provider: Callable[[Request], Principal | None],
     event_publisher: Callable[[dict[str, object]], None] | None = None,
+    detector: GuardDetector | None = None,
 ) -> FastAPI:
     """Create a Guard middleware FastAPI application.
 
@@ -392,7 +400,7 @@ def create_guard_app(
     app = FastAPI()
 
     rate_limiter = RateLimiter()
-    prompt_detector = PromptInjectionDetector()
+    prompt_detector = detector or PromptInjectionDetector()
     pii_scanner = PIIScanner()
 
     @app.middleware("http")

@@ -6,36 +6,41 @@ evidence below is true for the exact commit and the exact deployment target.
 
 ## Current status
 
-**NOT PASSED.** The repository has strong local evidence at commit `86b0dac`
-on `feature/phase-17-production-hardening`, but there is no real VPS or
-Supabase deployment, no live identity provider, no enforced Guard egress
-lockdown, no signed release, and no human signoff. The local preview remains
-loopback-only and must not be exposed publicly.
+**NOT PASSED.** The repository has strong local evidence at commit `4e5f982`
+on `feature/phase-17-production-hardening`, plus uncommitted P1 hardening
+(NVD/EPSS/KEV integrity, CPE ranges, freshness UI, scanner environment
+allowlisting, Guard detector/live-eval paths, privacy export/erasure, and
+secret scanning). There is still no real VPS or Supabase deployment, no live
+identity provider, no enforced Guard egress lockdown, no signed release, and
+no human signoff. The local preview remains loopback-only and must not be
+exposed publicly.
 
 ## Required evidence
 
 | Gate item | Required evidence | Current status |
 |---|---|---|
-| Root tests | `pytest -q` green, including disposable PostgreSQL | Pass locally (270 passed, 4 skipped) |
-| BFF tests | `pytest backend/tests -q` green | Pass locally (70 passed) |
-| Frontend | typecheck, unit tests, production build | Pass locally (6 unit tests) |
-| Migration rollback | apply and rollback against PostgreSQL | Pass locally (`tasks/evidence/migration-rollback.json`) |
+| Root tests | `pytest -q` green, including disposable PostgreSQL | Pass locally (290 passed, 4 skipped) |
+| BFF tests | `pytest backend/tests -q` green | Pass locally (74 passed) |
+| Frontend | typecheck, unit tests, production build | Pass locally (typecheck, 6 unit tests, production build) |
+| Migration rollback | apply and rollback against PostgreSQL | Pass locally through `0011_intel_cpe_ranges` (`tasks/evidence/migration-rollback.json`) |
 | Encrypted restore | destructive restore into a clean database | Pass locally (`tasks/evidence/postgres-backup-restore.json`) |
 | Dependency audit | `pip-audit` for engine and BFF | Pass locally |
 | SBOM | Python and image SBOMs | Python pass; image SBOMs configured in CI, not run |
-| Guard evaluation | labeled corpus with recorded mistakes; BFF route tests; loopback sidecar health | Pass locally (`tasks/evidence/guard-evaluation.json`, `guard-proxy-container.json`) |
+| Guard evaluation | labeled corpus with recorded mistakes; BFF route tests; loopback sidecar health | Deterministic pass locally (`f1=0.9756`); external detector and `--mode live` paths implemented, live provider evidence pending |
+| Intel feeds | per-record digests, dedupe, truncation/checkpoints, CPE ranges, freshness | Pass locally (NVD/EPSS/KEV tests, migration `0011`) |
+| Scanner isolation | child process cannot inherit application secrets | Pass locally (environment allowlist tests); host/network isolation evidence pending (`docs/SCANNER-SANDBOX.md`) |
 | Runtime security smoke | headers, auth, Guard route auth, metrics token, loopback URL | Pass locally (`tasks/evidence/security-smoke.json`) |
 | Edge rate limit | Caddy custom image and 2-request limit test | Pass locally (`tasks/evidence/observability-config.json`) |
 | Load smoke | bounded error rate and p95 | Pass locally (`tasks/evidence/load-test.json`) |
 | Container builds | BFF, engine, and Caddy images | Pass locally; CI configured, not run. Guard reuses the engine image. |
 | Observability config | `promtool` and `amtool` validation in CI | Pass locally after entrypoint fix; CI rerun pending |
-| CI and CodeQL | required checks green in GitHub | Pending: prior run failed on the observability entrypoint; rerun pending |
+| CI and CodeQL | required checks green in GitHub | Seven CI jobs passed in run `40395925263` for `4e5f982`; CodeQL and the new `Secret scan` job are pending |
 | Branch protection | ruleset applied to `main` | Pending |
 | Signed release | cosign signature and provenance | Pending |
 | Real deployment | VPS + Supabase + TLS + Caddy | Pending |
 | OIDC | live identity-provider login and MFA | Pending |
 | Egress lockdown | BFF cannot reach the model provider directly | Pending |
-| Browser E2E | login, scope, Guard, failure states, accessibility | Pass locally: 24 Playwright tests across Chromium, Firefox, and WebKit (`tasks/evidence/browser-e2e.json`); CI job pending. Multi-profile scanning is documented as out of scope for the deterministic browser suite. |
+| Browser E2E | login, scope, Guard, failure states, accessibility | Pass locally: 24 Playwright tests across Chromium, Firefox, and WebKit (`tasks/evidence/browser-e2e.json`); CI `Browser E2E/accessibility` job passed in `40395925263`. Multi-profile scanning is documented as out of scope for the deterministic browser suite. |
 | Human signoff | named reviewer and date | Pending |
 
 ## Deployment acceptance

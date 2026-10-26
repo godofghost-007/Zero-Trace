@@ -73,6 +73,7 @@ def fact_to_dict(fact: VulnerabilityFact) -> dict[str, object]:
         "payload_digest": fact.payload_digest,
         "epss_score_date": _iso(fact.epss_score_date),
         "kev_due_date": _iso(fact.kev_due_date),
+        "cpe_ranges": [list(item) for item in fact.cpe_ranges],
     }
 
 
@@ -94,6 +95,16 @@ def fact_from_dict(value: dict[str, object]) -> VulnerabilityFact:
         payload_digest=str(value["payload_digest"]),
         epss_score_date=_parse_date(value.get("epss_score_date")),  # type: ignore[arg-type]
         kev_due_date=_parse_date(value.get("kev_due_date")),  # type: ignore[arg-type]
+        cpe_ranges=tuple(
+            (
+                str(item[0]),
+                None if item[1] is None else str(item[1]),
+                None if item[2] is None else str(item[2]),
+                None if item[3] is None else str(item[3]),
+                None if item[4] is None else str(item[4]),
+            )
+            for item in value.get("cpe_ranges", [])
+        ),
     )
 
 
@@ -508,6 +519,7 @@ class LiveStore:
         idempotency: dict[str, tuple[str, str]],
         findings: Iterable[ServiceFinding] = (),
         uncertain_matches: Iterable[UncertainMatch] = (),
+        nvd_checkpoint: str | None = None,
     ) -> None:
         fact_rows = [
             (fact.cve_id, _json(fact_to_dict(fact))) for fact in facts
@@ -550,6 +562,10 @@ class LiveStore:
                 "state": value.state,
                 "fact_count": value.fact_count,
                 "error": value.error,
+                "checkpoint": value.checkpoint,
+                "truncated": value.truncated,
+                "total_results": value.total_results,
+                "pages": value.pages,
             }
             for key, value in ingestions.items()
         }
@@ -575,6 +591,7 @@ class LiveStore:
                 ("kev", kev_rows),
                 ("ingestions", ingestion_rows),
                 ("idempotency", idempotency),
+                ("nvd_checkpoint", nvd_checkpoint),
             ):
                 connection.execute(
                     """
@@ -635,6 +652,16 @@ class LiveStore:
                 state=str(item["state"]),
                 fact_count=int(item["fact_count"]),
                 error=item.get("error"),
+                checkpoint=(
+                    None if item.get("checkpoint") is None else str(item["checkpoint"])
+                ),
+                truncated=bool(item.get("truncated", False)),
+                total_results=(
+                    None
+                    if item.get("total_results") is None
+                    else int(item["total_results"])
+                ),
+                pages=int(item.get("pages", 0)),
             )
             for key, item in meta.get("ingestions", {}).items()
         }
@@ -650,6 +677,7 @@ class LiveStore:
             "idempotency": idempotency,
             "findings": findings,
             "uncertain_matches": uncertain_matches,
+            "nvd_checkpoint": meta.get("nvd_checkpoint"),
         }
 
     # -- scheduled intel ------------------------------------------------

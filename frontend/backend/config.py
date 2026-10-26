@@ -37,6 +37,9 @@ class Config:
     MAX_CONTENT_LENGTH = 1 * 1024 * 1024
     AUTH_REQUIRED = os.environ.get("ZEROTRACE_AUTH_REQUIRED", "true").lower() == "true"
     AUTH_SESSION_TTL_SECONDS = int(os.environ.get("ZEROTRACE_SESSION_TTL_SECONDS", "28800"))
+    AUTH_IDLE_TIMEOUT_SECONDS = int(
+        os.environ.get("ZEROTRACE_IDLE_TIMEOUT_SECONDS", "1800")
+    )
     AUTH_COOKIE_SECURE = os.environ.get("ZEROTRACE_COOKIE_SECURE", "false").lower() == "true"
     AUTH_MAX_LOGIN_ATTEMPTS = int(os.environ.get("ZEROTRACE_MAX_LOGIN_ATTEMPTS", "5"))
     AUTH_LOGIN_WINDOW_SECONDS = int(os.environ.get("ZEROTRACE_LOGIN_WINDOW_SECONDS", "300"))
@@ -46,6 +49,9 @@ class Config:
     AUTH_BOOTSTRAP_TENANT = os.environ.get("ZEROTRACE_BOOTSTRAP_TENANT", "tenant_local")
     AUTH_MFA_ISSUER = os.environ.get("ZEROTRACE_MFA_ISSUER", "ZeroTrace")
     AUTH_MFA_ENCRYPTION_KEY = env_or_file("ZEROTRACE_MFA_ENCRYPTION_KEY", "")
+    AUTH_MFA_REQUIRED = (
+        os.environ.get("ZEROTRACE_MFA_REQUIRED", "false").lower() == "true"
+    )
     AUTH_PASSWORD_RESET_TTL_SECONDS = int(
         os.environ.get("ZEROTRACE_PASSWORD_RESET_TTL_SECONDS", "1800")
     )

@@ -567,6 +567,7 @@ def create_live_engine(
             idempotency=intel_repository.idempotency,
             findings=intel_repository.findings.values(),
             uncertain_matches=intel_repository.uncertain_matches,
+            nvd_checkpoint=intel_repository.nvd_checkpoint,
         )
 
     intel_repository.on_change = persist_intel
@@ -579,6 +580,7 @@ def create_live_engine(
         idempotency=persisted["idempotency"],  # type: ignore[arg-type]
         findings=persisted.get("findings", ()),  # type: ignore[arg-type]
         uncertain_matches=persisted.get("uncertain_matches", ()),  # type: ignore[arg-type]
+        nvd_checkpoint=persisted.get("nvd_checkpoint"),  # type: ignore[arg-type]
     )
     intel_scheduler = IntelScheduler(
         intel_repository,
@@ -875,6 +877,7 @@ def create_live_engine(
                 "uncertainMatches": len(intel_repository.uncertain_matches),
                 "kevRecords": len(intel_repository.kev_records),
                 "epssRecords": len(intel_repository.epss_records),
+                "nvdCheckpoint": intel_repository.nvd_checkpoint,
                 "feeds": {
                     "nvd": NVD_ENDPOINT,
                     "epss": EPSS_ENDPOINT,

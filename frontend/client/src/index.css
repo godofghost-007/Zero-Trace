@@ -361,9 +361,11 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
 .result-card small { display: block; margin-top: 4px; color: #8d8981; font-size: 9px; line-height: 1.4; }
 .kv-list { display: grid; border-top: 1px solid #eee9e1; }
 .kv-row { display: grid; grid-template-columns: 122px minmax(0,1fr); gap: 10px; align-items: start; padding: 8px 2px; border-bottom: 1px solid #f1ede7; font-size: 10px; }
-.kv-row span { color: #918b81; font: 8px "SFMono-Regular", Consolas, monospace; letter-spacing: .06em; }
+.kv-row > span { color: #918b81; font: 8px "SFMono-Regular", Consolas, monospace; letter-spacing: .06em; }
 .kv-row b { overflow-wrap: anywhere; color: #4b5257; font-size: 10px; font-weight: 600; }
 .kv-row code { color: #4b5257; font: 9px "SFMono-Regular", Consolas, monospace; }
+.kv-row.intel-feed-row { grid-template-columns: 122px minmax(0,1fr) auto; align-items: center; }
+.kv-row.intel-feed-row small { display: block; margin-top: 3px; color: #8b877f; font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
 .scope-list { display: grid; }
 .scope-row { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,.9fr) auto; gap: 10px; align-items: center; padding: 9px 2px; border-top: 1px solid #efebe4; }
 .scope-row:first-child { border-top: 0; }
@@ -386,6 +388,8 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
 @media (max-width: 620px) {
   .form-actions .button { width: 100%; }
   .kv-row { grid-template-columns: 96px minmax(0,1fr); }
+  .kv-row.intel-feed-row { grid-template-columns: 80px minmax(0,1fr); }
+  .kv-row.intel-feed-row .state-tag { grid-column: 2; justify-self: start; }
 }
 
 @media (max-width: 850px) {
@@ -424,6 +428,9 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
 .mfa-panel > p { margin: 11px 0 24px; color: #73716b; font-size: 12px; line-height: 1.55; }
 .mfa-panel form { display: grid; gap: 13px; }
 .mfa-panel .login-brand-mark { margin-bottom: 18px; }
+.mfa-enrollment { display: grid; gap: 10px; margin: 0 0 18px; padding: 14px; border: 1px solid var(--line); background: var(--paper); }
+.mfa-enrollment p { margin: 0; color: #5b5954; font-size: 12px; line-height: 1.5; }
+.mfa-secret { display: block; padding: 10px; border: 1px dashed var(--line); background: #fff; color: #252b33; font: 13px "SFMono-Regular", Consolas, monospace; letter-spacing: .06em; word-break: break-all; }
 .login-page { min-height: 100vh; display: grid; grid-template-columns: minmax(0,1.25fr) minmax(380px,.75fr); background: var(--paper); }
 .login-brand { position: relative; display: flex; flex-direction: column; justify-content: center; overflow: hidden; padding: 7vw; background: #252d39; color: #f6f3ed; }
 .login-brand::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 42px 42px; mask-image: linear-gradient(120deg, rgba(0,0,0,.85), transparent 72%); }
@@ -467,7 +474,7 @@ code, pre, .code-label, .nav-code, .eyebrow, .panel-tag, .metric-card > span, .m
 .page-content .connector-down span,
 .page-content .data-banner small,
 .page-content .field small,
-.page-content .kv-row span,
+.page-content .kv-row > span,
 .page-content .result-card small,
 .page-content .queue-item small,
 .page-content .scope-row small,

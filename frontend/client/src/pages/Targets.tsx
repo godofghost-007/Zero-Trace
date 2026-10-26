@@ -31,6 +31,24 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "The request failed.";
 }
 
+function ageLabel(value: string | null): string {
+  if (!value) return "never";
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return "unknown";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function feedTone(feed: { state: string; lastError: string | null }): "green" | "amber" | "red" | "neutral" {
+  if (feed.lastError || feed.state === "failed" || feed.state === "degraded") return "red";
+  if (feed.state === "truncated") return "amber";
+  if (feed.state === "completed") return "green";
+  return "neutral";
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
@@ -77,6 +95,7 @@ export default function Targets() {
   const scopesQuery = useApiResource<{ items: EngineScope[] }>("/engine/scopes", refresh);
   const readinessQuery = useApiResource<Readiness>("/engine/readiness", refresh);
   const status = statusQuery.data;
+  const intelSchedule = status?.intel.schedule;
   const profiles = status?.profiles ?? [];
 
   const availableTools = useMemo(() => {
@@ -443,6 +462,35 @@ export default function Targets() {
     }
   };
 
+  const runFeed = async (source: "nvd" | "epss") => {
+    setIntelBusy(true);
+    setIntelNotice(null);
+    setIntelError(null);
+    try {
+      const response = await apiRequest<{ results?: Array<{ source: string; state: string; factCount?: number; error?: string | null }> }>(
+        `/engine/intel/schedule/run?source=${source}`,
+        { method: "POST" },
+      );
+      const result = response.results?.find((item) => item.source === source);
+      if (!result) {
+        setIntelError(`${source.toUpperCase()} did not return a scheduler result.`);
+      } else if (result.error) {
+        setIntelError(`${source.toUpperCase()} failed: ${result.error}`);
+      } else if (result.state === "truncated") {
+        setIntelNotice(`${source.toUpperCase()} returned a partial page set; the engine saved a checkpoint for the next run.`);
+      } else if (result.state !== "completed") {
+        setIntelError(`${source.toUpperCase()} ended in state: ${result.state}.`);
+      } else {
+        setIntelNotice(`${source.toUpperCase()} loaded: ${result.factCount ?? 0} records parsed.`);
+      }
+      setRefresh((value) => value + 1);
+    } catch (reason) {
+      setIntelError(messageOf(reason));
+    } finally {
+      setIntelBusy(false);
+    }
+  };
+
   const inspectPrompt = async () => {
     if (!guardText.trim()) {
       setGuardError("Enter a prompt to inspect.");
@@ -779,18 +827,37 @@ export default function Targets() {
             <div className="result-card"><span>FINDINGS</span><b>{status.intel.findings}</b><small>Service ↔ CVE matches</small></div>
             <div className="result-card"><span>UNCERTAIN</span><b>{status.intel.uncertainMatches}</b><small>Queued for review</small></div>
             <div className="result-card"><span>KEV RECORDS</span><b>{status.intel.kevRecords ?? 0}</b><small>CISA known-exploited entries</small></div>
+            <div className="result-card"><span>EPSS RECORDS</span><b>{status.intel.epssRecords ?? 0}</b><small>Exploit prediction scores</small></div>
+            <div className="result-card"><span>NVD CHECKPOINT</span><b>{status.intel.nvdCheckpoint ?? "complete"}</b><small>Resume point for a truncated page run</small></div>
           </div>
           <div className="form-actions">
             <button className="button button-ghost" onClick={() => void syncKev()} disabled={intelBusy || !status}>
               <RefreshCcw className={intelBusy ? "spin" : undefined} size={15} />{intelBusy ? "Fetching CISA KEV…" : "Sync CISA KEV"}
             </button>
+            <button className="button button-ghost" onClick={() => void runFeed("nvd")} disabled={intelBusy || !status}>
+              <RefreshCcw className={intelBusy ? "spin" : undefined} size={15} />Run NVD now
+            </button>
+            <button className="button button-ghost" onClick={() => void runFeed("epss")} disabled={intelBusy || !status}>
+              <RefreshCcw className={intelBusy ? "spin" : undefined} size={15} />Run EPSS now
+            </button>
           </div>
           {intelNotice && <div className="console-alert success" role="status"><ShieldCheck size={15} /><span>{intelNotice}</span></div>}
           {intelError && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{intelError}</span></div>}
+          {intelSchedule && <div className="kv-list">
+            <div className="kv-row"><span>SCHEDULER</span><b>{intelSchedule.enabled ? (intelSchedule.running ? "running" : "enabled, stopped") : "disabled"}</b></div>
+            {Object.entries(intelSchedule.feeds).map(([name, feed]) => <div className="kv-row intel-feed-row" key={name}>
+              <span>{name.toUpperCase()}</span>
+              <div>
+                <b>{feed.state} | {ageLabel(feed.lastCompleted)} | {feed.lastFactCount} record(s)</b>
+                <small>next {feed.nextRun ? new Date(feed.nextRun).toLocaleString() : "not scheduled"}{feed.lastError ? ` | ${feed.lastError}` : ""}</small>
+              </div>
+              <StateTag tone={feedTone(feed)}>{feed.state.toUpperCase()}</StateTag>
+            </div>)}
+          </div>}
           <div className="kv-list">
             {Object.entries(status.intel.feeds).map(([name, url]) => <div className="kv-row" key={name}><span>{name.toUpperCase()}</span><b>{url}</b></div>)}
           </div>
-          <div className="small-warning"><FileText size={15} /><span>Only the CISA KEV feed is exposed by this console. NVD and EPSS ingestion remain available through the engine&apos;s <code>/api/v1/intel/ingestions</code> endpoint.</span></div>
+          <div className="small-warning"><FileText size={15} /><span>NVD, EPSS, and CISA KEV are refreshed by the engine scheduler. This console exposes manual KEV sync plus on-demand NVD/EPSS scheduler runs; direct ingestion remains available through the engine&apos;s <code>/api/v1/intel/ingestions</code> endpoint.</span></div>
         </> : <div className="empty-console"><FileText size={22} /><b>Intel is offline</b><p>Connect the engine to read its fact and finding counters.</p></div>}
       </Panel>
 

@@ -50,6 +50,27 @@ class HttpGuardTransportTests(unittest.TestCase):
                 self.transport.post(url, body=b"{}", timeout_seconds=5)
             self.assertEqual(context.exception.status_code, 403, url)
 
+    def test_disallowed_url_never_reaches_the_network_opener(self) -> None:
+        opener = _Opener()
+        with patch.object(self.transport, "_opener", opener):
+            with self.assertRaises(GuardError):
+                self.transport.post(
+                    "https://evil.example/v1/chat/completions",
+                    body=b"{}",
+                    timeout_seconds=5,
+                )
+        self.assertEqual(opener.requests, [])
+
+    def test_redirects_are_disabled(self) -> None:
+        from app.guard_transport import _NoRedirect
+
+        handler = _NoRedirect()
+        self.assertIsNone(
+            handler.redirect_request(
+                None, None, 302, "Found", {}, "https://evil.example/"
+            )
+        )
+
     def test_provider_key_is_added_server_side(self) -> None:
         opener = _Opener()
         with patch.object(self.transport, "_opener", opener):

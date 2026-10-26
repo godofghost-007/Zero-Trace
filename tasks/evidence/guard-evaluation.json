@@ -11,7 +11,7 @@
     "total": 40
   },
   "detector": "zerotrace-regex-baseline-v1",
-  "generatedAt": "2026-10-25T20:07:43.295512+00:00",
+  "generatedAt": "2026-10-26T20:51:00.453431+00:00",
   "limitations": [
     "Synthetic 40-case corpus, not a representative production sample.",
     "Regex detector only; no external classifier or LLM judge was called.",

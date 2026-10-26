@@ -33,6 +33,9 @@ class VulnerabilityFact:
     payload_digest: str
     epss_score_date: date | None = None
     kev_due_date: date | None = None
+    cpe_ranges: tuple[
+        tuple[str, str | None, str | None, str | None, str | None], ...
+    ] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "cve_id", normalize_cve(self.cve_id))
@@ -43,6 +46,19 @@ class VulnerabilityFact:
         object.__setattr__(
             self, "cpe_names", tuple(normalize_cpe(cpe) for cpe in self.cpe_names)
         )
+        normalized_ranges: list[
+            tuple[str, str | None, str | None, str | None, str | None]
+        ] = []
+        for item in self.cpe_ranges:
+            if len(item) != 5:
+                raise IntelError("CPE range shape is invalid")
+            criteria = normalize_cpe(item[0])
+            bounds = tuple(
+                None if value is None or str(value).strip() == "" else str(value)
+                for value in item[1:]
+            )
+            normalized_ranges.append((criteria, *bounds))
+        object.__setattr__(self, "cpe_ranges", tuple(normalized_ranges))
         if self.cvss_score is not None and not 0.0 <= self.cvss_score <= 10.0:
             raise IntelError("CVSS score is out of range")
         if self.epss_score is not None and not 0.0 <= self.epss_score <= 1.0:
@@ -205,6 +221,149 @@ def match_service(
     return outcome.finding
 
 
+def _cpe_parts(value: str) -> list[str]:
+    return value.split(":")
+
+
+def _cpe_matches(service_cpe: str, fact_cpe: str) -> bool:
+    """Match an exact service CPE against NVD wildcard CPE fields."""
+
+    service_parts = _cpe_parts(service_cpe)
+    fact_parts = _cpe_parts(fact_cpe)
+    if len(service_parts) != 13 or len(fact_parts) != 13:
+        return False
+    return all(
+        fact_parts[index] in {"*", "-"}
+        or service_parts[index] == fact_parts[index]
+        for index in range(2, 13)
+    )
+
+
+def _version_key(value: str) -> tuple[tuple[int, int | str], ...]:
+    parts = re.findall(r"\d+|[a-z]+", value.lower())
+    while parts and parts[-1] == "0":
+        parts.pop()
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part)
+        for part in parts
+    )
+
+
+def _compare_versions(left: str, right: str) -> int:
+    from itertools import zip_longest
+
+    left_key = _version_key(left)
+    right_key = _version_key(right)
+    for a, b in zip_longest(left_key, right_key, fillvalue=(0, 0)):
+        if a == b:
+            continue
+        return -1 if a < b else 1
+    return 0
+
+
+def _range_matches(
+    service: ServiceDescriptor,
+    item: tuple[str, str | None, str | None, str | None, str | None],
+) -> bool:
+    criteria, start_including, start_excluding, end_including, end_excluding = item
+    parts = _cpe_parts(criteria)
+    if len(parts) != 13:
+        return False
+    if parts[3] != service.vendor.lower() or parts[4] != service.product.lower():
+        return False
+    if service.version is None:
+        return False
+    version = service.version.lower()
+    if start_including is not None and _compare_versions(version, start_including) < 0:
+        return False
+    if start_excluding is not None and _compare_versions(version, start_excluding) <= 0:
+        return False
+    if end_including is not None and _compare_versions(version, end_including) > 0:
+        return False
+    if end_excluding is not None and _compare_versions(version, end_excluding) >= 0:
+        return False
+    if not any(
+        (start_including, start_excluding, end_including, end_excluding)
+    ) and parts[5] not in {"*", "-"}:
+        return version == parts[5]
+    return True
+
+
+def _range_evidence(
+    item: tuple[str, str | None, str | None, str | None, str | None],
+) -> str:
+    criteria, start_including, start_excluding, end_including, end_excluding = item
+    bounds = [
+        label
+        for label, value in (
+            (f">={start_including}" if start_including else "", start_including),
+            (f">{start_excluding}" if start_excluding else "", start_excluding),
+            (f"<={end_including}" if end_including else "", end_including),
+            (f"<{end_excluding}" if end_excluding else "", end_excluding),
+        )
+        if value is not None
+    ]
+    return f"{criteria} ({', '.join(bounds)})" if bounds else criteria
+
+
+def _match_evidence(
+    service: ServiceDescriptor,
+    fact: VulnerabilityFact,
+) -> (
+    tuple[str, float, tuple[str, ...]]
+    | str
+    | tuple[str, tuple[str, ...]]
+):
+    if service.cpe is not None and service.cpe in fact.cpe_names:
+        return "exact_cpe", 1.0, (service.cpe,)
+    if service.cpe is not None:
+        wildcard_candidates = tuple(
+            sorted(
+                cpe for cpe in fact.cpe_names if _cpe_matches(service.cpe, cpe)
+            )
+        )
+        if len(wildcard_candidates) == 1:
+            return "cpe_wildcard", 0.95, wildcard_candidates
+        if len(wildcard_candidates) > 1:
+            return "ambiguous_candidates", wildcard_candidates
+        range_candidates = tuple(
+            sorted(
+                _range_evidence(item)
+                for item in fact.cpe_ranges
+                if _range_matches(service, item)
+            )
+        )
+        if len(range_candidates) == 1:
+            return "cpe_version_range", 0.9, range_candidates
+        if len(range_candidates) > 1:
+            return "ambiguous_candidates", range_candidates
+    if service.version is None:
+        return "missing_service_version"
+    vendor = service.vendor.lower()
+    product = service.product.lower()
+    version = service.version.lower()
+    candidates = tuple(
+        sorted(
+            cpe
+            for cpe in fact.cpe_names
+            if (
+                len(_cpe_parts(cpe)) == 13
+                and _cpe_parts(cpe)[3] == vendor
+                and _cpe_parts(cpe)[4] == product
+                and (
+                    _cpe_parts(cpe)[5] in {"*", "-"}
+                    or _cpe_parts(cpe)[5] == version
+                )
+            )
+        )
+    )
+    if len(candidates) == 1:
+        return "vendor_product_version", 0.8, candidates
+    if len(candidates) > 1:
+        return "ambiguous_candidates", candidates
+    return "no_candidate"
+
+
 def correlate_service(
     service: ServiceDescriptor,
     fact: VulnerabilityFact,
@@ -218,50 +377,35 @@ def correlate_service(
         now=retrieved,
         max_age=freshness_window,
     )
-    if service.cpe is not None and service.cpe in fact.cpe_names:
-        method = "exact_cpe"
-        confidence = 1.0
-        evidence = (service.cpe,)
-    else:
-        product = service.product.lower()
-        vendor = service.vendor.lower()
-        if service.version is None:
-            return CorrelationOutcome(
-                None,
-                UncertainMatch(
-                    service.service_id,
-                    service.asset_id,
-                    fact.cve_id,
-                    "missing_service_version",
-                    (),
-                    freshness,
-                    fact.source_revision,
-                ),
-            )
-        candidates = [
-            cpe
-            for cpe in fact.cpe_names
-            if f":{vendor}:{product}:" in cpe
-            and f":{service.version.lower()}:" in cpe
-        ]
-        candidates = tuple(sorted(candidates))
-        if len(candidates) != 1:
-            reason = "ambiguous_candidates" if len(candidates) > 1 else "no_candidate"
-            return CorrelationOutcome(
-                None,
-                UncertainMatch(
-                    service.service_id,
-                    service.asset_id,
-                    fact.cve_id,
-                    reason,
-                    candidates,
-                    freshness,
-                    fact.source_revision,
-                ),
-            )
-        method = "vendor_product_version"
-        confidence = 0.8
-        evidence = (candidates[0],)
+    matched = _match_evidence(service, fact)
+    if isinstance(matched, str):
+        return CorrelationOutcome(
+            None,
+            UncertainMatch(
+                service.service_id,
+                service.asset_id,
+                fact.cve_id,
+                matched,
+                (),
+                freshness,
+                fact.source_revision,
+            ),
+        )
+    if isinstance(matched, tuple) and len(matched) == 2:
+        reason, candidates = matched
+        return CorrelationOutcome(
+            None,
+            UncertainMatch(
+                service.service_id,
+                service.asset_id,
+                fact.cve_id,
+                reason,
+                tuple(candidates),
+                freshness,
+                fact.source_revision,
+            ),
+        )
+    method, confidence, evidence = matched
     if freshness != "fresh":
         return CorrelationOutcome(
             None,
