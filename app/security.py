@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import BinaryIO
 
+from .settings import env_or_file
+
 
 PASSWORD_HASH_VERSION = "scrypt-v1"
 MIN_SECRET_BYTES = 32
@@ -175,7 +177,7 @@ def security_headers() -> dict[str, str]:
 
 
 def _required_secret(name: str) -> bytes:
-    value = os.environ.get(name, "")
+    value = env_or_file(name)
     secret = value.encode("utf-8")
     if len(secret) < MIN_SECRET_BYTES:
         raise ValueError(f"{name} must contain at least {MIN_SECRET_BYTES} bytes")

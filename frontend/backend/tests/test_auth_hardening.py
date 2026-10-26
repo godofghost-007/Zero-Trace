@@ -1,4 +1,5 @@
 import pytest
+from cryptography.fernet import Fernet
 
 from backend import create_app
 from backend.auth import create_user
@@ -16,12 +17,31 @@ def test_production_config_rejects_local_demo_defaults():
             "DEMO_MODE": True,
             "AUTH_REQUIRED": True,
             "AUTH_COOKIE_SECURE": False,
+            "ENGINE_URL": "http://127.0.0.1:8765",
+            "ENGINE_API_KEY": "e" * 32,
         })
     message = str(error.value)
     assert "FLASK_SECRET_KEY" in message
     assert "DATABASE_URL" in message
     assert "AUTO_CREATE_SCHEMA" in message
     assert "ZEROTRACE_COOKIE_SECURE" in message
+
+
+def test_production_config_rejects_missing_engine_key():
+    with pytest.raises(RuntimeError) as error:
+        create_app({
+            "ENVIRONMENT": "production",
+            "SECRET_KEY": "x" * 64,
+            "SQLALCHEMY_DATABASE_URI": "postgresql://user:pass@db.example/zt",
+            "AUTO_CREATE_SCHEMA": False,
+            "DEMO_MODE": False,
+            "AUTH_REQUIRED": True,
+            "AUTH_COOKIE_SECURE": True,
+            "AUTH_MFA_ENCRYPTION_KEY": Fernet.generate_key().decode(),
+            "ENGINE_URL": "http://127.0.0.1:8765",
+            "ENGINE_API_KEY": "",
+        })
+    assert "ZEROTRACE_ENGINE_API_KEY" in str(error.value)
 
 
 @pytest.fixture()

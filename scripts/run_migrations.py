@@ -1,4 +1,3 @@
-import os
 import sys
 from pathlib import Path
 
@@ -8,6 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.errors import ConfigurationError, DependencyUnavailableError
+from app.settings import env_or_file
 
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 DOWN_DIR = MIGRATIONS_DIR / "down"
@@ -97,7 +97,7 @@ def rollback_latest(database_url: str) -> str:
 
 
 def run(rollback: bool = False) -> None:
-    database_url = os.environ.get("DATABASE_URL", "").strip()
+    database_url = env_or_file("DATABASE_URL")
     if not database_url:
         raise ConfigurationError("DATABASE_URL is required")
     if rollback:

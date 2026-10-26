@@ -152,6 +152,8 @@ def test_production_guard_config_requires_a_loopback_url():
         "AUTH_REQUIRED": True,
         "AUTH_COOKIE_SECURE": True,
         "AUTH_MFA_ENCRYPTION_KEY": Fernet.generate_key().decode(),
+        "ENGINE_URL": "http://127.0.0.1:8765",
+        "ENGINE_API_KEY": "e" * 32,
         "GUARD_PROXY_ENABLED": True,
         "GUARD_PROXY_URL": "http://example.com:8766",
         "GUARD_BFF_API_KEY": "a" * 32,

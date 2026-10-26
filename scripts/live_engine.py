@@ -94,6 +94,7 @@ from app.security import (  # noqa: E402
     require_role,
     verify_api_key,
 )
+from app.settings import env_or_file  # noqa: E402
 from app.target_policy import TargetPolicy  # noqa: E402
 
 LOGGER = logging.getLogger("zerotrace.live_engine")
@@ -355,12 +356,44 @@ class EngineSettings:
 
     @classmethod
     def from_env(cls) -> "EngineSettings":
-        api_key = os.environ.get("ZEROTRACE_ENGINE_API_KEY", DEFAULT_API_KEY)
-        target_policy = TargetPolicy.from_env()
-        raw_secret = os.environ.get("ZEROTRACE_ENGINE_AUTH_SECRET", "").encode()
+        environment = os.environ.get("ZEROTRACE_ENV", "development").strip().lower()
+        api_key = env_or_file("ZEROTRACE_ENGINE_API_KEY")
+        raw_secret = env_or_file("ZEROTRACE_ENGINE_AUTH_SECRET").encode()
+        database_url = env_or_file("DATABASE_URL")
+        if environment in {"production", "prod"}:
+            problems: list[str] = []
+            if not api_key:
+                problems.append("ZEROTRACE_ENGINE_API_KEY is required")
+            elif api_key == DEFAULT_API_KEY:
+                problems.append(
+                    "ZEROTRACE_ENGINE_API_KEY must not use the local demo default"
+                )
+            elif len(api_key) < 16:
+                problems.append(
+                    "ZEROTRACE_ENGINE_API_KEY must contain at least 16 characters"
+                )
+            if not raw_secret:
+                problems.append("ZEROTRACE_ENGINE_AUTH_SECRET is required")
+            elif len(raw_secret) < 32:
+                problems.append(
+                    "ZEROTRACE_ENGINE_AUTH_SECRET must contain at least 32 bytes"
+                )
+            if not database_url:
+                problems.append("DATABASE_URL is required")
+            elif not database_url.startswith(
+                ("postgres://", "postgresql://", "postgresql+psycopg://")
+            ):
+                problems.append("DATABASE_URL must point to PostgreSQL")
+            if problems:
+                raise ValueError(
+                    "Unsafe production engine configuration: " + "; ".join(problems)
+                )
+        else:
+            api_key = api_key or DEFAULT_API_KEY
         secret = raw_secret or hashlib.sha256(
             b"zerotrace-local-engine:" + api_key.encode("utf-8")
         ).digest()
+        target_policy = TargetPolicy.from_env()
         raw_port = os.environ.get("ZEROTRACE_ENGINE_PORT", "8765")
         try:
             port = int(raw_port)
@@ -381,7 +414,6 @@ class EngineSettings:
             scan_retries = int(os.environ.get("ZEROTRACE_SCAN_MAX_RETRIES", "0"))
         except ValueError as error:
             raise ValueError("engine numeric settings must be integers") from error
-        database_url = os.environ.get("DATABASE_URL", "").strip()
         if database_url.startswith("postgresql+psycopg://"):
             database_url = database_url.replace(
                 "postgresql+psycopg://", "postgresql://", 1

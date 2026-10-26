@@ -57,6 +57,24 @@ ZEROTRACE_GUARD_BFF_API_KEY=<generated BFF-to-Guard key>
 Guard provider secrets live in a separate `.env.guard` file copied from
 `deploy/guard.env.example`. The BFF and engine do not receive that file.
 
+### Secret files
+
+For a managed secret store or Docker secret, mount the value as a file and use
+the `_FILE` suffix instead of putting the value in the environment:
+
+```dotenv
+FLASK_SECRET_KEY_FILE=/run/secrets/flask_secret_key
+DATABASE_URL_FILE=/run/secrets/database_url
+ZEROTRACE_ENGINE_API_KEY_FILE=/run/secrets/engine_api_key
+ZEROTRACE_ENGINE_AUTH_SECRET_FILE=/run/secrets/engine_auth_secret
+ZEROTRACE_MFA_ENCRYPTION_KEY_FILE=/run/secrets/mfa_key
+ZEROTRACE_GUARD_BFF_API_KEY_FILE=/run/secrets/guard_bff_key
+```
+
+The process rejects a secret when both `NAME` and `NAME_FILE` are set, and
+fails startup when the file cannot be read. Keep the files root-owned and
+mode `0400` or `0600`, and mount them read-only into the container.
+
 Generate the MFA key with:
 
 ```bash

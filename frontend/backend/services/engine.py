@@ -23,6 +23,8 @@ from urllib.request import (
     build_opener,
 )
 
+from ..env import env_or_file
+
 DEFAULT_ENGINE_BASE_URL = "http://127.0.0.1:8765"
 DEFAULT_ENGINE_API_KEY = "sk-zerotrace-local-engine-7f3c9a2b"
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -130,11 +132,14 @@ class EngineSettingsStore:
         self.path = Path(path)
 
     def _defaults(self) -> StoredEngineSettings:
+        configured_url = (
+            os.environ.get("ZEROTRACE_ENGINE_URL")
+            or os.environ.get("ZEROTRACE_ENGINE_BASE_URL")
+            or DEFAULT_ENGINE_BASE_URL
+        )
         return StoredEngineSettings(
-            base_url=validate_base_url(
-                os.environ.get("ZEROTRACE_ENGINE_BASE_URL", DEFAULT_ENGINE_BASE_URL)
-            ),
-            api_key=os.environ.get(
+            base_url=validate_base_url(configured_url),
+            api_key=env_or_file(
                 "ZEROTRACE_ENGINE_API_KEY", DEFAULT_ENGINE_API_KEY
             ),
             mode=validate_mode(os.environ.get("ZEROTRACE_ENGINE_MODE", "demo")),

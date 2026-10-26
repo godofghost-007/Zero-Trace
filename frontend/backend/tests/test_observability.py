@@ -87,6 +87,8 @@ def test_production_metrics_require_a_token():
         "AUTH_REQUIRED": True,
         "AUTH_COOKIE_SECURE": True,
         "AUTH_MFA_ENCRYPTION_KEY": Fernet.generate_key().decode(),
+        "ENGINE_URL": "http://127.0.0.1:8765",
+        "ENGINE_API_KEY": "e" * 32,
         "METRICS_ENABLED": True,
         "METRICS_TOKEN": "",
     })

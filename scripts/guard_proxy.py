@@ -38,6 +38,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from app.guard import GuardConfig, create_guard_app  # noqa: E402
 from app.guard_transport import HttpGuardTransport  # noqa: E402
 from app.security import Principal  # noqa: E402
+from app.settings import env_or_file  # noqa: E402
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
@@ -64,9 +65,9 @@ def _audit_publisher(path: str | None):
 
 
 def main() -> int:
-    secret = os.environ.get("ZEROTRACE_GUARD_API_KEY_SECRET", "").strip()
-    digest = os.environ.get("ZEROTRACE_GUARD_API_KEY_DIGEST", "").strip()
-    provider_key = os.environ.get("ZEROTRACE_GUARD_PROVIDER_API_KEY", "").strip()
+    secret = env_or_file("ZEROTRACE_GUARD_API_KEY_SECRET")
+    digest = env_or_file("ZEROTRACE_GUARD_API_KEY_DIGEST")
+    provider_key = env_or_file("ZEROTRACE_GUARD_PROVIDER_API_KEY")
     if not secret or not digest:
         print(
             "ZEROTRACE_GUARD_API_KEY_SECRET and "

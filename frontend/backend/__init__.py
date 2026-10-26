@@ -61,6 +61,18 @@ def validate_runtime_config(app: Flask) -> None:
                 "ZEROTRACE_METRICS_TOKEN must be at least 16 characters when "
                 "metrics are enabled"
             )
+    engine_key = str(app.config.get("ENGINE_API_KEY", "")).strip()
+    if len(engine_key) < 16:
+        problems.append(
+            "ZEROTRACE_ENGINE_API_KEY must contain at least 16 characters "
+            "in production"
+        )
+    try:
+        from .services.engine import validate_base_url
+
+        validate_base_url(str(app.config.get("ENGINE_URL", "")))
+    except ValueError as error:
+        problems.append(str(error))
     if app.config.get("GUARD_PROXY_ENABLED"):
         guard_key = str(app.config.get("GUARD_BFF_API_KEY", "")).strip()
         if len(guard_key) < 16:

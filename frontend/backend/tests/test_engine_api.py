@@ -4,7 +4,7 @@ from urllib.error import HTTPError
 import pytest
 
 from backend import create_app
-from backend.services.engine import EngineClient, EngineError
+from backend.services.engine import EngineClient, EngineError, EngineSettingsStore
 
 
 @pytest.fixture()
@@ -384,3 +384,10 @@ def test_engine_endpoints_reject_non_json_and_foreign_origins(client):
     )
     assert foreign.status_code == 403
     assert foreign.json["error"]["code"] == "origin_denied"
+
+
+def test_engine_settings_prefer_engine_url_over_legacy_name(monkeypatch, tmp_path):
+    monkeypatch.setenv("ZEROTRACE_ENGINE_URL", "http://127.0.0.1:9999")
+    monkeypatch.setenv("ZEROTRACE_ENGINE_BASE_URL", "http://127.0.0.1:8888")
+    store = EngineSettingsStore(tmp_path / "engine-settings.json")
+    assert store.load().base_url == "http://127.0.0.1:9999"
