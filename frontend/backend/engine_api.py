@@ -469,7 +469,7 @@ def run_engine_intel_schedule():
         _client().request(
             "POST",
             f"/api/v1/intel/schedule/run{query}",
-            timeout=45.0,
+            timeout=300.0,
         )
     )
 

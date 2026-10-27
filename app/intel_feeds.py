@@ -14,7 +14,7 @@ from .intel import IntelError, VulnerabilityFact, normalize_cve, normalize_cpe, 
 NVD_ENDPOINT = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 EPSS_ENDPOINT = "https://api.first.org/data/v1/epss"
 CISA_KEV_ENDPOINT = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-MAX_FEED_BYTES = 8 * 1024 * 1024
+MAX_FEED_BYTES = 32 * 1024 * 1024
 EPSS_PAGE_SIZE = 10_000
 MAX_EPSS_PAGES = 60
 
@@ -279,7 +279,8 @@ def sync_nvd(
     start_index: int = 0,
     last_known_good: tuple[VulnerabilityFact, ...] = (),
     retrieved_at: datetime | None = None,
-    max_pages: int = 100,
+    max_pages: int = 5,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> NvdSyncResult:
     if not 1 <= page_size <= 2_000 or start_index < 0 or max_pages < 1:
         raise ValueError("NVD pagination bounds are invalid")
@@ -341,6 +342,7 @@ def sync_nvd(
             checkpoint = str(current)
             if current >= total or not entries:
                 break
+            sleep(6.0)
         else:
             truncated = True
         if total_results is not None and current < total_results:
