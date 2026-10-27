@@ -622,11 +622,15 @@ class SubfinderAdapter:
         return AdapterResult(tuple(assets), (), tuple(warnings), state)
 
 
+# The scanner is intentionally limited to an explicit, small set of high-value
+# service ports. This keeps the active scan bounded and avoids broad internet
+# port sweeps.
+NMAP_TARGET_PORTS = "21,22,23,80,139,445,1433,3306,3389,8080,27017"
 NMAP_LEVEL_ARGUMENTS: Mapping[str, tuple[str, ...]] = {
-    "normal": ("--top-ports", "100"),
-    "medium": ("-sV", "--top-ports", "1000"),
-    "high": ("-sV", "-p-", "--version-light"),
-    "deep": ("-sV", "-p-", "--version-all"),
+    "normal": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
+    "medium": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
+    "high": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
+    "deep": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
 }
 
 
@@ -643,12 +647,8 @@ class NmapAdapter:
         self.ports = _validate_ports(ports)
 
     def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
-        if self.ports is not None and profile.level in {"normal", "medium"}:
-            port_arguments = (
-                ("-sV", "-p", self.ports)
-                if profile.level == "medium"
-                else ("-p", self.ports)
-            )
+        if self.ports is not None:
+            port_arguments = ("-sV", "--script", "vuln", "-p", self.ports)
         else:
             port_arguments = NMAP_LEVEL_ARGUMENTS[profile.level]
         output = self.runner.run(

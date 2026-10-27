@@ -266,7 +266,7 @@ class ReconAdapterTests(unittest.TestCase):
         self.assertEqual(result.services, (("lab.example.test", "tcp", 443, "https"),))
         self.assertEqual(result.warnings, ())
 
-    def test_nmap_levels_escalate_from_normal_to_deep(self) -> None:
+    def test_nmap_levels_use_bounded_target_ports(self) -> None:
         calls: list[tuple[str, ...]] = []
 
         class Runner:
@@ -282,15 +282,19 @@ class ReconAdapterTests(unittest.TestCase):
         ):
             NmapAdapter("nmap", Runner()).run(target(), PROFILES[profile_id])
 
-        self.assertEqual(
-            calls,
-            [
-                ("nmap", "-sT", "--top-ports", "100", "-oX", "-", "lab.example.test"),
-                ("nmap", "-sT", "-sV", "--top-ports", "1000", "-oX", "-", "lab.example.test"),
-                ("nmap", "-sT", "-sV", "-p-", "--version-light", "-oX", "-", "lab.example.test"),
-                ("nmap", "-sT", "-sV", "-p-", "--version-all", "-oX", "-", "lab.example.test"),
-            ],
+        expected = (
+            "nmap",
+            "-sT",
+            "-sV",
+            "--script",
+            "vuln",
+            "-p",
+            "21,22,23,80,139,445,1433,3306,3389,8080,27017",
+            "-oX",
+            "-",
+            "lab.example.test",
         )
+        self.assertEqual(calls, [expected for _ in range(4)])
 
     def test_nmap_medium_preserves_product_and_version(self) -> None:
         class Runner:
