@@ -15,7 +15,7 @@ from app.recon_api import ReconQueue
 from app.scan_schedule import ScanScheduleRegistry
 from app.target_policy import TargetPolicy
 
-NOW = datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
 
 
 def _queue(tmp_path: Path) -> tuple[ReconQueue, InMemoryReconRepository]:
