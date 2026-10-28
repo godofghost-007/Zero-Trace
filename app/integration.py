@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from app.intel import ServiceFinding
 from app.prioritization import PrioritizationInput
@@ -34,11 +34,11 @@ class IntegratedReadinessState:
         if not blocked:
             self.unblocked_attacks += 1
 
-    def _input_value(self, inputs: tuple[PrioritizationInput, ...], name: str) -> float:
-        for inp in inputs:
-            if inp.name == name and not inp.missing:
-                return inp.value
-        return 0.0
+    def _input_value(self, inputs: Mapping[str, float], name: str) -> float:
+        value = inputs.get(name)
+        if value is None:
+            return 0.0
+        return float(value)
 
     def calculate(self) -> ReadinessResult:
         risks_by_asset: dict[str, AssetRisk] = {}
