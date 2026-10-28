@@ -174,7 +174,7 @@ def test_engine():
 
 @engine_api.get("/engine/status")
 def engine_status():
-    return jsonify(_client().request("GET", "/api/v1/engine/status", timeout=6.0))
+    return jsonify(_client().request("GET", "/api/v1/engine/status", timeout=15.0))
 
 
 @engine_api.get("/engine/metrics")
@@ -204,7 +204,7 @@ def engine_readiness():
 
 @engine_api.get("/engine/scopes")
 def engine_scopes():
-    return jsonify(_client().request("GET", "/api/v1/recon/scopes", timeout=6.0))
+    return jsonify(_client().request("GET", "/api/v1/recon/scopes", timeout=15.0))
 
 
 @engine_api.post("/engine/scopes")
@@ -234,7 +234,7 @@ def create_engine_scope():
     if not isinstance(fields.get("targets"), list) or not fields["targets"]:
         return _error("invalid_request", "At least one target is required.", 400)
     return jsonify(
-        _client().request("POST", "/api/v1/recon/scopes", fields, timeout=8.0)
+        _client().request("POST", "/api/v1/recon/scopes", fields, timeout=15.0)
     ), 201
 
 
@@ -289,7 +289,7 @@ def verify_engine_authorization():
 
 @engine_api.get("/engine/scans")
 def engine_scans():
-    return jsonify(_client().request("GET", "/api/v1/recon/scans", timeout=6.0))
+    return jsonify(_client().request("GET", "/api/v1/recon/scans", timeout=15.0))
 
 
 @engine_api.post("/engine/scans")
@@ -308,7 +308,7 @@ def create_engine_scan():
     )
     fields.pop("authorized", None)
     return jsonify(
-        _client().request("POST", "/api/v1/recon/scans", fields, timeout=12.0)
+        _client().request("POST", "/api/v1/recon/scans", fields, timeout=60.0)
     ), 202
 
 
@@ -318,7 +318,7 @@ def engine_scan_status(scan_id: str):
         return _error("invalid_request", "Scan ID is invalid.", 400)
     return jsonify(
         _client().request(
-            "GET", f"/api/v1/recon/scans/{scan_id}", timeout=6.0
+            "GET", f"/api/v1/recon/scans/{scan_id}", timeout=15.0
         )
     )
 
@@ -329,7 +329,7 @@ def engine_scan_result(scan_id: str):
         return _error("invalid_request", "Scan ID is invalid.", 400)
     return jsonify(
         _client().request(
-            "GET", f"/api/v1/recon/scans/{scan_id}/result", timeout=8.0
+            "GET", f"/api/v1/recon/scans/{scan_id}/result", timeout=60.0
         )
     )
 

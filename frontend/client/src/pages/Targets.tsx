@@ -534,6 +534,15 @@ export default function Targets() {
         ]),
     ).values(),
   ];
+  const [assetPage, setAssetPage] = useState(0);
+  const [servicePage, setServicePage] = useState(0);
+  const pageSize = 10;
+  const assetPages = Math.max(1, Math.ceil(assets.length / pageSize));
+  const servicePages = Math.max(1, Math.ceil(services.length / pageSize));
+  const safeAssetPage = Math.min(assetPage, assetPages - 1);
+  const safeServicePage = Math.min(servicePage, servicePages - 1);
+  const pagedAssets = assets.slice(safeAssetPage * pageSize, (safeAssetPage + 1) * pageSize);
+  const pagedServices = services.slice(safeServicePage * pageSize, (safeServicePage + 1) * pageSize);
   const tlsFindings = [
     ...new Map(
       runs
@@ -808,11 +817,21 @@ export default function Targets() {
           </div>)}
           {assets.length > 0 && <div className="tls-block">
             <div className="panel-tag">ASSETS</div>
-            <div className="kv-list">{assets.map((asset) => <div className="kv-row" key={asset}><span>ASSET</span><b>{asset}</b></div>)}</div>
+            <div className="kv-list">{pagedAssets.map((asset) => <div className="kv-row" key={asset}><span>ASSET</span><b>{asset}</b><small>passive host</small></div>)}</div>
+            {assetPages > 1 && <div className="form-actions">
+              <button className="button button-ghost" type="button" onClick={() => setAssetPage((page) => Math.max(0, page - 1))} disabled={safeAssetPage === 0}>Previous</button>
+              <span>{safeAssetPage + 1} / {assetPages}</span>
+              <button className="button button-ghost" type="button" onClick={() => setAssetPage((page) => Math.min(assetPages - 1, page + 1))} disabled={safeAssetPage === assetPages - 1}>Next</button>
+            </div>}
           </div>}
           {services.length > 0 && <div className="tls-block">
             <div className="panel-tag">SERVICES</div>
-            <div className="kv-list">{services.map((service, index) => <div className="kv-row" key={`${service.asset}-${service.protocol}-${service.port}-${index}`}><span>{service.protocol.toUpperCase()} / {service.port}</span><b>{service.asset} · {service.product ?? "unknown"}{service.version ? ` ${service.version}` : ""}</b></div>)}</div>
+            <div className="kv-list">{pagedServices.map((service, index) => <div className="kv-row" key={`${service.asset}-${service.protocol}-${service.port}-${index}`}><span>{service.protocol.toUpperCase()} / {service.port}</span><b>{service.asset} · {service.product ?? "unknown"}{service.version ? ` ${service.version}` : ""}</b><small>open service</small></div>)}</div>
+            {servicePages > 1 && <div className="form-actions">
+              <button className="button button-ghost" type="button" onClick={() => setServicePage((page) => Math.max(0, page - 1))} disabled={safeServicePage === 0}>Previous</button>
+              <span>{safeServicePage + 1} / {servicePages}</span>
+              <button className="button button-ghost" type="button" onClick={() => setServicePage((page) => Math.min(servicePages - 1, page + 1))} disabled={safeServicePage === servicePages - 1}>Next</button>
+            </div>}
           </div>}
           {warnings.map((warning) => <div className="console-alert info" key={warning}><TriangleAlert size={15} /><span>{warning}</span></div>)}
         </>}
