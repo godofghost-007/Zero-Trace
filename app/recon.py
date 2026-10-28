@@ -183,12 +183,12 @@ PROFILES: Mapping[str, ReconProfile] = {
         level="deep",
     ),
     "service_inventory_v1": ReconProfile(
-        "service_inventory_v1", "nmap", 120, 100, 4 * 1024 * 1024, 10_000, 60
+        "service_inventory_v1", "nmap", 300, 100, 4 * 1024 * 1024, 10_000, 60
     ),
     "service_inventory_normal_v1": ReconProfile(
         "service_inventory_normal_v1",
         "nmap",
-        120,
+        300,
         100,
         4 * 1024 * 1024,
         10_000,
@@ -198,7 +198,7 @@ PROFILES: Mapping[str, ReconProfile] = {
     "service_inventory_medium_v1": ReconProfile(
         "service_inventory_medium_v1",
         "nmap",
-        300,
+        600,
         100,
         8 * 1024 * 1024,
         20_000,
@@ -630,10 +630,10 @@ class SubfinderAdapter:
 # port sweeps.
 NMAP_TARGET_PORTS = "21,22,23,80,139,445,1433,3306,3389,8080,27017"
 NMAP_LEVEL_ARGUMENTS: Mapping[str, tuple[str, ...]] = {
-    "normal": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
-    "medium": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
-    "high": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
-    "deep": ("-sV", "--script", "vuln", "-p", NMAP_TARGET_PORTS),
+    "normal": ("-sV", "--script", "vuln", "--script-timeout", "20s", "-p", NMAP_TARGET_PORTS),
+    "medium": ("-sV", "--script", "vuln", "--script-timeout", "20s", "-p", NMAP_TARGET_PORTS),
+    "high": ("-sV", "--script", "vuln", "--script-timeout", "20s", "-p", NMAP_TARGET_PORTS),
+    "deep": ("-sV", "--script", "vuln", "--script-timeout", "20s", "-p", NMAP_TARGET_PORTS),
 }
 
 
@@ -651,7 +651,7 @@ class NmapAdapter:
 
     def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
         if self.ports is not None:
-            port_arguments = ("-sV", "--script", "vuln", "-p", self.ports)
+            port_arguments = ("-sV", "--script", "vuln", "--script-timeout", "20s", "-p", self.ports)
         else:
             port_arguments = NMAP_LEVEL_ARGUMENTS[profile.level]
         output = self.runner.run(
