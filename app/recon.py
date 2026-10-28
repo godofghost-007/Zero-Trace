@@ -140,15 +140,15 @@ PROFILES: Mapping[str, ReconProfile] = {
         "synthetic_inventory_v1", "synthetic", 30, 10, 64 * 1024, 100, 60
     ),
     "passive_subdomain_v1": ReconProfile(
-        "passive_subdomain_v1", "subfinder", 120, 10, 2 * 1024 * 1024, 10_000, 60
+        "passive_subdomain_v1", "subfinder", 120, 10, 32 * 1024 * 1024, 100_000, 60
     ),
     "passive_subdomain_normal_v1": ReconProfile(
         "passive_subdomain_normal_v1",
         "subfinder",
         120,
         10,
-        2 * 1024 * 1024,
-        10_000,
+        32 * 1024 * 1024,
+        100_000,
         60,
         level="normal",
     ),
@@ -157,8 +157,8 @@ PROFILES: Mapping[str, ReconProfile] = {
         "subfinder",
         300,
         10,
-        4 * 1024 * 1024,
-        25_000,
+        32 * 1024 * 1024,
+        100_000,
         30,
         level="medium",
     ),
@@ -167,8 +167,8 @@ PROFILES: Mapping[str, ReconProfile] = {
         "subfinder",
         600,
         10,
-        8 * 1024 * 1024,
-        50_000,
+        32 * 1024 * 1024,
+        100_000,
         10,
         level="high",
     ),
@@ -177,7 +177,7 @@ PROFILES: Mapping[str, ReconProfile] = {
         "subfinder",
         900,
         10,
-        16 * 1024 * 1024,
+        32 * 1024 * 1024,
         100_000,
         5,
         level="deep",
@@ -618,6 +618,9 @@ class SubfinderAdapter:
                     assets.append(host)
             except (KeyError, TypeError, ValueError, ReconError):
                 warnings.append("malformed passive-discovery record")
+            if len(assets) >= profile.max_results:
+                warnings.append("passive discovery result limit reached")
+                break
         state = ReconRunState.PARTIAL if warnings else ReconRunState.COMPLETED
         return AdapterResult(tuple(assets), (), tuple(warnings), state)
 
