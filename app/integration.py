@@ -34,8 +34,21 @@ class IntegratedReadinessState:
         if not blocked:
             self.unblocked_attacks += 1
 
-    def _input_value(self, inputs: Mapping[str, float], name: str) -> float:
-        value = inputs.get(name)
+    def _input_value(self, inputs: object, name: str) -> float:
+        if isinstance(inputs, Mapping):
+            value = inputs.get(name)
+            if value is None:
+                return 0.0
+            return float(value)
+        for inp in inputs or ():
+            if getattr(inp, "name", None) == name and not getattr(
+                inp, "missing", False
+            ):
+                return float(getattr(inp, "value", 0.0))
+        try:
+            value = inputs.get(name)  # type: ignore[union-attr]
+        except (AttributeError, TypeError):
+            value = None
         if value is None:
             return 0.0
         return float(value)
