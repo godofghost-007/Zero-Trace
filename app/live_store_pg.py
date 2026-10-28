@@ -159,6 +159,12 @@ class PostgresLiveStore:
             ).fetchall()
         return [self._scope_from_row(row) for row in rows]
 
+    def delete_scope(self, scope_id: str) -> None:
+        with self._session() as connection:
+            connection.execute(
+                "DELETE FROM live_scopes WHERE scope_id = %s", (scope_id,)
+            )
+
     @staticmethod
     def _scope_from_row(row: Any) -> Scope:
         return Scope(

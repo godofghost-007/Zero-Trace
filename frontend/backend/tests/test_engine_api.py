@@ -246,6 +246,28 @@ def test_engine_client_preserves_authorization_denials(monkeypatch):
     assert "authorization denied" in str(error.value).lower()
 
 
+def test_engine_client_preserves_upstream_failure_details(monkeypatch):
+    class FailingOpener:
+        def open(self, request, timeout):
+            raise HTTPError(
+                request.full_url,
+                503,
+                "Service Unavailable",
+                {},
+                BytesIO(
+                    b'{"error":{"message":"Intel feed is still loading"}}'
+                ),
+            )
+
+    monkeypatch.setattr("backend.services.engine._OPENER", FailingOpener())
+    engine = EngineClient("http://127.0.0.1:8765", "sk-test")
+    with pytest.raises(EngineError) as error:
+        engine.request("GET", "/api/v1/engine/status")
+    assert error.value.status_code == 502
+    assert "intel feed is still loading" in str(error.value).lower()
+    assert "could not complete" not in str(error.value).lower()
+
+
 def test_engine_test_reports_a_safe_failure(client, monkeypatch):
     def failing_request(self, method, path, payload=None, *, timeout=10.0):
         raise EngineError("Live engine is unreachable.", 502)
@@ -391,3 +413,91 @@ def test_engine_settings_prefer_engine_url_over_legacy_name(monkeypatch, tmp_pat
     monkeypatch.setenv("ZEROTRACE_ENGINE_BASE_URL", "http://127.0.0.1:8888")
     store = EngineSettingsStore(tmp_path / "engine-settings.json")
     assert store.load().base_url == "http://127.0.0.1:9999"
+
+
+def test_system_info_reports_local_device_configuration(client):
+    response = client.get("/api/v1/system/info")
+    assert response.status_code == 200
+    payload = response.json
+    assert payload["hostname"]
+    assert payload["deviceType"] in {"Laptop", "Desktop / workstation"}
+    assert payload["cpu"]["logical"] >= 1
+    assert payload["memory"]["totalGb"] > 0
+    assert payload["disk"]["totalGb"] > 0
+    assert "pythonVersion" in payload
+
+
+def test_engine_scope_delete_forwards_a_valid_scope_id(client, monkeypatch):
+    calls = []
+
+    def fake_request(self, method, path, payload=None, **kwargs):
+        calls.append((method, path, payload))
+        return {"scopeId": "scope-lab", "deleted": True}
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.request", fake_request
+    )
+    response = client.delete("/api/v1/engine/scopes/scope-lab")
+    assert response.status_code == 200
+    assert response.json == {"scopeId": "scope-lab", "deleted": True}
+    assert calls == [("DELETE", "/api/v1/recon/scopes/scope-lab", None)]
+
+    invalid = client.delete("/api/v1/engine/scopes/bad$scope")
+    assert invalid.status_code == 400
+
+
+def test_engine_records_group_latest_results_by_target(client, monkeypatch):
+    calls = []
+
+    def fake_request(self, method, path, payload=None, **kwargs):
+        calls.append((method, path, payload))
+        if path == "/api/v1/recon/scans":
+            return {
+                "items": [
+                    {
+                        "scanId": "scan-old",
+                        "scopeId": "scope-lab",
+                        "target": "lab.example.test",
+                        "profileId": "tls_metadata_v1",
+                        "state": "completed",
+                    },
+                    {
+                        "scanId": "scan-new",
+                        "scopeId": "scope-lab",
+                        "target": "lab.example.test",
+                        "profileId": "tls_metadata_v1",
+                        "state": "completed",
+                    },
+                ]
+            }
+        if path == "/api/v1/recon/scans/scan-new/result":
+            return {
+                "assets": ["lab.example.test"],
+                "services": [],
+                "tlsFindings": [
+                    {
+                        "subject": "lab.example.test",
+                        "issuer": "test-ca",
+                        "expires_at": "2027-01-01",
+                        "status": "valid",
+                    }
+                ],
+                "warnings": [],
+            }
+        return {}
+
+    monkeypatch.setattr(
+        "backend.engine_api.EngineClient.request", fake_request
+    )
+    response = client.get("/api/v1/engine/records")
+    assert response.status_code == 200
+    assert len(response.json["items"]) == 1
+    item = response.json["items"][0]
+    assert item["target"] == "lab.example.test"
+    assert item["scans"][0]["scanId"] == "scan-new"
+    assert item["scans"][0]["tlsFindings"][0]["status"] == "valid"
+    assert calls[-1] == (
+        "GET",
+        "/api/v1/recon/scans/scan-new/result",
+        None,
+    )

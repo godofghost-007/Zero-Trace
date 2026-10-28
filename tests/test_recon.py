@@ -288,6 +288,8 @@ class ReconAdapterTests(unittest.TestCase):
             "-sV",
             "--script",
             "vuln",
+            "--script-timeout",
+            "20s",
             "-p",
             "21,22,23,80,139,445,1433,3306,3389,8080,27017",
             "-oX",

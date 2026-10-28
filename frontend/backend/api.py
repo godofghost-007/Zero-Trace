@@ -111,16 +111,47 @@ def dashboard_summary():
     return jsonify(state)
 
 
+def _event_context(rows: list[EventOutbox]) -> dict[str, tuple[str | None, str | None]]:
+    """Resolve explicit target/scope context without changing the event envelope."""
+
+    asset_ids: set[str] = set()
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        if row.entity_type == "asset":
+            asset_ids.add(row.entity_id)
+        asset_id = payload.get("asset_id")
+        if isinstance(asset_id, str) and asset_id:
+            asset_ids.add(asset_id)
+    assets = Asset.query.filter(Asset.id.in_(asset_ids)).all() if asset_ids else []
+    by_id = {asset.id: asset for asset in assets}
+    contexts: dict[str, tuple[str | None, str | None]] = {}
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        asset = by_id.get(row.entity_id) if row.entity_type == "asset" else None
+        if asset is None:
+            asset = by_id.get(payload.get("asset_id"))
+        scope_id = payload.get("scope_id") or payload.get("scopeId")
+        if not isinstance(scope_id, str) or not scope_id:
+            scope_id = asset.scope_id if asset else None
+        target = payload.get("target") or payload.get("hostname")
+        if not isinstance(target, str) or not target:
+            target = asset.hostname if asset else None
+        contexts[row.id] = (scope_id, target)
+    return contexts
+
+
 @api.get("/events")
 def events():
     limit = request.args.get("limit", default=50, type=int) or 50
     limit = max(1, min(100, limit))
     rows = EventOutbox.query.order_by(EventOutbox.occurred_at.desc()).limit(limit).all()
+    contexts = _event_context(rows)
     return jsonify({"items": [
         {"id": row.id, "type": row.event_type, "entityType": row.entity_type, "entity": row.entity_id,
          "source": row.source, "correlation": row.correlation_id, "at": row.occurred_at.isoformat(),
          "status": row.status, "attempts": row.attempts, "lastError": row.last_error,
-         "redisEntryId": row.redis_entry_id, "schemaVersion": row.schema_version, "payload": row.payload}
+         "redisEntryId": row.redis_entry_id, "schemaVersion": row.schema_version, "payload": row.payload,
+         "scopeId": contexts[row.id][0], "target": contexts[row.id][1]}
         for row in rows
     ], "pending": EventOutbox.query.filter_by(status="pending").count(), "bus": bus_status()})
 

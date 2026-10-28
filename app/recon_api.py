@@ -47,6 +47,9 @@ class QueuePersistence(Protocol):
     def load_scopes(self) -> list[Scope]:
         ...
 
+    def delete_scope(self, scope_id: str) -> None:
+        ...
+
     def save_scan(self, **kwargs: object) -> None:
         ...
 
@@ -151,6 +154,16 @@ class ReconQueue:
             self._scope_authorizations[scope.scope_id] = authorization_id
         if self.persistence is not None:
             self.persistence.save_scope(scope)
+
+    def remove_scope(self, scope_id: str, owner_id: str) -> bool:
+        scope = self._scopes.get(scope_id)
+        if scope is None or scope.owner_id != owner_id:
+            return False
+        del self._scopes[scope_id]
+        self._scope_authorizations.pop(scope_id, None)
+        if self.persistence is not None:
+            self.persistence.delete_scope(scope_id)
+        return True
 
     def _check_target_policy(self, value: str) -> None:
         try:
@@ -410,6 +423,13 @@ def create_recon_app(
             if scope.owner_id == actor.subject
         ]
         return {"items": sorted(scopes, key=lambda item: str(item["scopeId"]))}
+
+    @app.delete("/api/v1/recon/scopes/{scope_id}")
+    async def delete_scope(request: Request, scope_id: str) -> dict[str, object]:
+        actor = principal(request, "operator")
+        if not queue.remove_scope(scope_id, actor.subject):
+            raise HTTPException(status_code=404, detail="scope not found")
+        return {"scopeId": scope_id, "deleted": True}
 
     @app.post("/api/v1/recon/scopes", status_code=201)
     async def create_scope(

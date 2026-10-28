@@ -49,4 +49,5 @@ Thumbs.db
 
 # Local agent/tooling fixtures and archived checkpoints
 .agents/
+subfinder/
 zerotracedemo.zip

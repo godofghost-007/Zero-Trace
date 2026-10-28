@@ -129,6 +129,29 @@ class ReconApiTests(unittest.TestCase):
         self.assertEqual(result.json()["state"], "completed")
         self.assertEqual(result.json()["assets"], ["lab.example.test"])
 
+    def test_operator_can_delete_a_scope(self) -> None:
+        headers = {"X-Principal-ID": "operator-1", "X-Principal-Role": "operator"}
+        deleted = self.client.delete("/api/v1/recon/scopes/scope-lab", headers=headers)
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(deleted.json(), {"scopeId": "scope-lab", "deleted": True})
+
+        listed = self.client.get(
+            "/api/v1/recon/scopes",
+            headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "viewer"},
+        )
+        self.assertEqual(listed.status_code, 200)
+        self.assertNotIn(
+            "scope-lab",
+            [item["scopeId"] for item in listed.json()["items"]],
+        )
+
+    def test_scope_deletion_requires_operator_role(self) -> None:
+        response = self.client.delete(
+            "/api/v1/recon/scopes/scope-lab",
+            headers={"X-Principal-ID": "operator-1", "X-Principal-Role": "viewer"},
+        )
+        self.assertEqual(response.status_code, 403)
+
     def test_scope_creation_requires_operator_role(self) -> None:
         response = self.client.post(
             "/api/v1/recon/scopes",

@@ -149,11 +149,13 @@ def create_app(test_config: dict | None = None) -> Flask:
     from .cli import register_cli
     from .engine_api import engine_api
     from .guard_api import guard_api
+    from .system_api import system_api
 
     app.register_blueprint(auth, url_prefix="/api/v1")
     app.register_blueprint(api, url_prefix="/api/v1")
     app.register_blueprint(engine_api, url_prefix="/api/v1")
     app.register_blueprint(guard_api, url_prefix="/api/v1")
+    app.register_blueprint(system_api, url_prefix="/api/v1")
     configure_oidc(app)
     register_cli(app)
 

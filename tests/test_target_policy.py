@@ -27,6 +27,8 @@ def test_normalize_target_rejects_urls_ports_and_wildcards():
         normalize_target("*.example.com")
     with pytest.raises(TargetPolicyError):
         normalize_target("localhost")
+    with pytest.raises(TargetPolicyError, match="not an IP address"):
+        normalize_target("192.0.2.10")
 
 
 def test_normalize_target_is_case_and_trailing_dot_insensitive():

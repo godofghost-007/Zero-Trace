@@ -1,23 +1,24 @@
 import type { ReactNode } from "react";
-import { Activity, ArrowRight, Crosshair, Database, FileText, LogOut, Radar, RefreshCcw, Settings2, Shield, ShieldCheck, UserRound } from "lucide-react";
+import { ArrowRight, Crosshair, FileText, LogOut, Radar, RefreshCcw, Settings2, Shield, ShieldCheck, UserRound } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { useZeroTraceDemo } from "@/lib/zeroTraceDemo";
 
 const nav = [
-  { href: "/recon", label: "Trace Recon", icon: Radar, code: "00" },
-  { href: "/intel", label: "Intel Guard", icon: FileText, code: "01" },
-  { href: "/guard", label: "Trace Guard", icon: Shield, code: "02" },
-  { href: "/settings", label: "Settings", icon: Settings2, code: "03" },
+  { href: "/", label: "ZeroTrace", icon: Crosshair, code: "00" },
+  { href: "/recon", label: "Trace Recon", icon: Radar, code: "01" },
+  { href: "/intel", label: "Intel Guard", icon: FileText, code: "02" },
+  { href: "/guard", label: "Trace Guard", icon: Shield, code: "03" },
+  { href: "/admin", label: "Admin", icon: Settings2, code: "04" },
 ];
 
 export default function DemoShell({ children }: { children: ReactNode }) {
   const [path] = useLocation();
   const { user, logout } = useAuth();
-  const { stage, runAll, reset, refresh, isProcessing, isConnected, connectionError, backend } = useZeroTraceDemo();
-  const currentStep = stage === 3 ? "Complete" : stage === 0 ? "Ready to run" : `Step ${stage} of 3`;
+  const { stage, runAll, reset, refresh, isProcessing, isConnected, connectionError, backend, readiness } = useZeroTraceDemo();
+  const currentStep = readiness.score === null ? "COVERAGE PENDING" : `READINESS ${readiness.score.toFixed(0)}`;
   const connectionLabel = isConnected ? `${backend.database.toUpperCase()} API CONNECTED` : backend.database === "connecting" ? "CONNECTING TO API" : "API OFFLINE";
-  const isConsole = path === "/targets" || path === "/settings";
+  const isDemoPage = path === "/guard";
   const canOperate = user?.role === "operator" || user?.role === "admin";
 
   return (
@@ -39,14 +40,14 @@ export default function DemoShell({ children }: { children: ReactNode }) {
           <div className="topbar-actions">
             <span className={`live-pill ${isConnected ? "live-online" : "live-offline"}`}><i /> {connectionLabel}</span>
             <span className="user-pill" title={`${user?.email} · ${user?.role}`}><UserRound size={13} /> <b>{user?.email}</b><em>{user?.role.toUpperCase()}</em></span>
-            {!isConsole && canOperate && <button className="button button-primary button-small" onClick={runAll} disabled={!isConnected || stage >= 3 || isProcessing}><ArrowRight size={15} />{isProcessing ? "Saving…" : stage === 0 ? "Run scenario" : stage >= 3 ? "Scenario complete" : "Advance scenario"}</button>}
-            {!isConsole && canOperate && <button className="icon-button" onClick={() => void reset()} disabled={!isConnected || isProcessing} title="Reset persisted demo scenario" aria-label="Reset scenario"><RefreshCcw size={16} /></button>}
+            {isDemoPage && canOperate && <button className="button button-primary button-small" onClick={runAll} disabled={!isConnected || stage >= 3 || isProcessing}><ArrowRight size={15} />{isProcessing ? "Saving…" : stage === 0 ? "Advance demo" : stage >= 3 ? "Demo complete" : "Advance demo"}</button>}
+            {isDemoPage && canOperate && <button className="icon-button" onClick={() => void reset()} disabled={!isConnected || isProcessing} title="Reset persisted demo scenario" aria-label="Reset scenario"><RefreshCcw size={16} /></button>}
             <button className="icon-button" onClick={() => void logout()} title="Sign out" aria-label="Sign out"><LogOut size={16} /></button>
           </div>
         </header>
         {connectionError && <div className="api-error-banner" role="alert"><div><b>Backend connection issue</b><span>{connectionError}</span></div><button onClick={() => void refresh()}>Retry</button></div>}
         <main className="page-content">{children}</main>
-        <footer className="page-footer"><span><span className="dot dot-red" /> FIXTURES BY DEFAULT — live engine reads require an approved scope</span><span>ZERO TRACE · LOCAL CONNECTIVITY DEMO</span></footer>
+        <footer className="page-footer"><span><span className="dot dot-red" /> LIVE READS REQUIRE AN APPROVED SCOPE</span><span>ZERO TRACE · LOCAL LOOPBACK INSTALLATION</span></footer>
       </div>
     </div>
   );

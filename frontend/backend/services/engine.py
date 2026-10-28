@@ -287,7 +287,7 @@ class EngineClient:
                 ) from error
             if error.code >= 500:
                 raise EngineError(
-                    "Live engine could not complete the request.", 502
+                    f"Live engine error ({error.code}): {message}", 502
                 ) from error
             raise EngineError(message, error.code) from error
         except (URLError, TimeoutError, OSError) as error:

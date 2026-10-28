@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Cable, KeyRound, PlugZap, Save, ShieldCheck, TriangleAlert } from "lucide-react";
-import { Link } from "wouter";
-import { PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
+import { Panel, StateTag } from "@/components/DemoPrimitives";
 import { apiRequest, useApiResource } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { EngineSettings, EngineTestResult } from "@/lib/liveEngine";
@@ -10,7 +9,7 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : "The request failed.";
 }
 
-export default function Settings() {
+export default function EngineConnection() {
   const { user } = useAuth();
   const canAdmin = user?.role === "admin";
   const query = useApiResource<EngineSettings>("/settings/engine", 0);
@@ -70,28 +69,14 @@ export default function Settings() {
   };
 
   return <>
-    <PageHeading
-      eyebrow="ADMIN / 06 · CONNECTION"
-      title="Engine settings"
-      description="Point the dashboard at the loopback live engine. The API key is stored server-side and is never returned to this browser."
-      actions={<StateTag tone={settings?.mode === "live" ? "green" : "neutral"}>{settings ? settings.mode.toUpperCase() : "LOADING"}</StateTag>}
-    />
-
     <div className="data-banner">
       <ShieldCheck size={18} />
       <span>
         <b>Two modes, one boundary.</b>
-        <small>Demo mode keeps every page on fixtures. Live mode is used by Targets &amp; scope to create an approved scope and run allowlisted reads. The engine must be running on this machine.</small>
+        <small>Demo mode keeps every page on fixtures. Live mode lets ZeroTrace run allowlisted reads through the loopback engine. The engine must be running on this machine.</small>
       </span>
+      <StateTag tone={settings?.mode === "live" ? "green" : "neutral"}>{settings ? settings.mode.toUpperCase() : "LOADING"}</StateTag>
     </div>
-
-    <Panel title="Settings pages" subtitle="Architecture, targets, and database tools live here." tag="SETTINGS">
-      <div className="form-actions">
-        <Link className="button button-ghost" href="/architecture">Architecture</Link>
-        <Link className="button button-ghost" href="/targets">Targets & scope</Link>
-        <Link className="button button-ghost" href="/database">Database & events</Link>
-      </div>
-    </Panel>
 
     <div className="two-column">
       <Panel
@@ -146,7 +131,7 @@ export default function Settings() {
         {!canAdmin && <div className="small-warning">Only an admin can change the engine connection. Operator and viewer sessions can inspect and test it.</div>}
         {notice && <div className="console-alert success" role="status"><ShieldCheck size={15} /><span>{notice}</span></div>}
         {error && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{error}</span></div>}
-        {testResult && <div className="console-alert info" role="status">
+        {testResult && <div className={`console-alert ${testResult.ok ? "info" : ""}`} role="status">
           {testResult.ok ? <Cable size={15} /> : <TriangleAlert size={15} />}
           <span>
             {testResult.ok
@@ -181,7 +166,7 @@ export default function Settings() {
       </div>
       <div className="small-warning">
         <ShieldCheck size={15} />
-        <span>The engine authenticates every API call, binds to 127.0.0.1, and only accepts targets inside an operator-created scope. Scans are bounded; there is no exploitation, brute force, or remediation.</span>
+        <span>The engine authenticates every API call, binds to 127.0.0.1, and only accepts targets inside an operator-created scope. Scans are bounded; there is no exploitation, brute force, or automatic remediation.</span>
       </div>
     </Panel>
   </>;

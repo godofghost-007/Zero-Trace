@@ -1,46 +1,43 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { expectConsole, signIn } from "./helpers";
 
-async function uncheckProfile(page: Page, name: RegExp) {
-  const checkbox = page.getByRole("checkbox", { name });
-  if ((await checkbox.count()) > 0 && await checkbox.isChecked()) {
-    await checkbox.uncheck();
-  }
-}
-
-test("an operator creates a scope and runs the synthetic profile", async ({ page }) => {
+test("an operator saves and removes an authorized target in Admin", async ({ page }) => {
+  await page.route("**/api/v1/engine/records", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ items: [] }),
+  }));
   await signIn(page);
   await expectConsole(page);
-  await page.getByRole("link", { name: "Targets & scope" }).click();
+
+  const navigation = page.getByRole("navigation", { name: "Main navigation" });
+  await navigation.getByRole("link", { name: /Admin/ }).click();
+  await page.getByRole("tab", { name: "Targets & scope" }).click();
   await expect(page.getByRole("heading", { name: "Targets & scope" })).toBeVisible();
-  await expect(page.getByText("ENGINE CONNECTED")).toBeVisible();
+  await expect(page.getByText("0 SAVED").first()).toBeVisible();
 
-  await uncheckProfile(page, /Nmap service scan/);
-  await uncheckProfile(page, /Subfinder passive/);
-  await uncheckProfile(page, /TLS metadata/);
+  await page.getByLabel("Target domain").fill("lab.example.test");
+  await page.getByRole("button", { name: "Save authorized target" }).click();
+  await expect(page.getByRole("status")).toContainText("saved as an authorized target");
+  await expect(page.getByText("lab.example.test").first()).toBeVisible();
+  await expect(page.getByText("1 SAVED").first()).toBeVisible();
 
-  const synthetic = page.getByRole("checkbox", { name: /Synthetic inventory/ });
-  await expect(synthetic).toHaveCount(1);
-  await synthetic.check();
+  await navigation.getByRole("link", { name: /ZeroTrace/ }).click();
+  await expect(page.getByLabel("Target")).toContainText("lab.example.test");
 
-  await page.getByLabel("Target URL, hostname, or IPv4").fill("lab.example.test");
-  await page.getByRole("button", { name: "Create scope & run selected scans" }).click();
-
-  const liveScans = page.locator(".panel").filter({
-    has: page.getByRole("heading", { name: "Live scans" }),
-  });
-  const scanRows = liveScans.locator(".scope-row");
-  await expect(scanRows).toHaveCount(1);
-  await expect(scanRows).toContainText("Synthetic inventory");
-  await expect(scanRows.getByText("COMPLETED", { exact: true })).toBeVisible();
-  await expect(liveScans.locator(".result-card").filter({ hasText: "TARGET" })).toContainText("lab.example.test");
-  await expect(liveScans.locator(".result-card").filter({ hasText: "ASSETS / SERVICES" })).toContainText("1 / 1");
+  await navigation.getByRole("link", { name: /Admin/ }).click();
+  await page.getByRole("tab", { name: "Targets & scope" }).click();
+  await page.getByRole("button", { name: "Remove lab.example.test" }).click();
+  await expect(page.getByRole("status")).toContainText("removed from the authorized target list");
+  await expect(page.getByText("No authorized targets yet")).toBeVisible();
 });
 
-test("an engine outage is surfaced and keeps scope creation disabled", async ({ page }) => {
-  await signIn(page);
-  await expectConsole(page);
-
+test("an engine outage is surfaced and keeps target saving disabled", async ({ page }) => {
+  await page.route("**/api/v1/engine/records", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ items: [] }),
+  }));
   await page.route("**/api/v1/engine/status", (route) => route.fulfill({
     status: 503,
     contentType: "application/json",
@@ -49,9 +46,12 @@ test("an engine outage is surfaced and keeps scope creation disabled", async ({ 
     }),
   }));
 
-  await page.getByRole("link", { name: "Targets & scope" }).click();
-  await expect(page.getByRole("heading", { name: "Targets & scope" })).toBeVisible();
+  await signIn(page);
+  await expectConsole(page);
+  const navigation = page.getByRole("navigation", { name: "Main navigation" });
+  await navigation.getByRole("link", { name: /Admin/ }).click();
+  await page.getByRole("tab", { name: "Targets & scope" }).click();
   await expect(page.getByRole("alert")).toContainText(/Engine unavailable/i);
   await expect(page.getByText("ENGINE OFFLINE")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create scope & run selected scans" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save authorized target" })).toBeDisabled();
 });

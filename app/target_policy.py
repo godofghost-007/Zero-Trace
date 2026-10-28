@@ -18,6 +18,7 @@ allowlist. The policy never resolves DNS and never scans anything itself.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import os
 from typing import Iterable
 
@@ -36,6 +37,12 @@ def normalize_target(value: str) -> str:
         raise TargetPolicyError("target must be a hostname, not a URL")
     if ":" in candidate or "*" in candidate:
         raise TargetPolicyError("target must be a literal hostname")
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    else:
+        raise TargetPolicyError("target must be a domain name, not an IP address")
     labels = candidate.split(".")
     if len(labels) < 2 or len(candidate) > 253:
         raise TargetPolicyError("target must be a valid hostname")

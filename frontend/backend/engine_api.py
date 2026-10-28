@@ -30,6 +30,14 @@ from .services.engine import (
 engine_api = Blueprint("engine_api", __name__)
 
 SCAN_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+SCOPE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+TERMINAL_SCAN_STATES = {
+    "completed",
+    "partial",
+    "failed",
+    "timed_out",
+    "cancelled",
+}
 
 
 def _error(code: str, message: str, status: int):
@@ -207,6 +215,17 @@ def engine_scopes():
     return jsonify(_client().request("GET", "/api/v1/recon/scopes", timeout=15.0))
 
 
+@engine_api.delete("/engine/scopes/<scope_id>")
+def delete_engine_scope(scope_id: str):
+    if not SCOPE_ID_PATTERN.fullmatch(scope_id):
+        return _error("invalid_request", "Scope ID is invalid.", 400)
+    return jsonify(
+        _client().request(
+            "DELETE", f"/api/v1/recon/scopes/{scope_id}", timeout=15.0
+        )
+    )
+
+
 @engine_api.post("/engine/scopes")
 def create_engine_scope():
     payload = _json_body()
@@ -332,6 +351,76 @@ def engine_scan_result(scan_id: str):
             "GET", f"/api/v1/recon/scans/{scan_id}/result", timeout=60.0
         )
     )
+
+
+@engine_api.get("/engine/records")
+def engine_records():
+    """Return the latest persisted scan result per target/profile.
+
+    The engine already stores bounded, normalized results. This adapter groups
+    them by target so the Database view and report downloads can show Nmap,
+    Subfinder, TLS metadata and synthetic inventory without exposing engine
+    internals to the browser.
+    """
+
+    client = _client()
+    payload = client.request("GET", "/api/v1/recon/scans", timeout=15.0)
+    scans = payload.get("items", []) if isinstance(payload, dict) else []
+    latest: dict[tuple[str, str, str], dict[str, object]] = {}
+    for scan in scans:
+        if not isinstance(scan, dict):
+            continue
+        scope_id = str(scan.get("scopeId", ""))
+        target = str(scan.get("target", ""))
+        profile_id = str(scan.get("profileId", ""))
+        scan_id = str(scan.get("scanId", ""))
+        if not scope_id or not target or not profile_id or not scan_id:
+            continue
+        latest[(scope_id, target, profile_id)] = scan
+
+    grouped: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for (scope_id, target, profile_id), scan in latest.items():
+        scan_id = str(scan.get("scanId", ""))
+        state = str(scan.get("state", "unknown"))
+        record: dict[str, object] = {
+            "scanId": scan_id,
+            "scopeId": scope_id,
+            "target": target,
+            "profileId": profile_id,
+            "state": state,
+            "assets": [],
+            "services": [],
+            "tlsFindings": [],
+            "warnings": [],
+        }
+        if state in TERMINAL_SCAN_STATES and SCAN_ID_PATTERN.fullmatch(scan_id):
+            try:
+                result = client.request(
+                    "GET",
+                    f"/api/v1/recon/scans/{scan_id}/result",
+                    timeout=20.0,
+                )
+            except EngineError:
+                result = None
+            if isinstance(result, dict):
+                record.update(
+                    {
+                        "assets": result.get("assets", []),
+                        "services": result.get("services", []),
+                        "tlsFindings": result.get("tlsFindings", []),
+                        "warnings": result.get("warnings", []),
+                    }
+                )
+        grouped.setdefault((scope_id, target), []).append(record)
+
+    items = []
+    for (scope_id, target), records in grouped.items():
+        records.sort(key=lambda item: str(item["profileId"]))
+        items.append(
+            {"scopeId": scope_id, "target": target, "scans": records}
+        )
+    items.sort(key=lambda item: (str(item["target"]), str(item["scopeId"])))
+    return jsonify({"items": items})
 
 
 @engine_api.get("/engine/schedules")

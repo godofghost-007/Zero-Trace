@@ -2,7 +2,8 @@ import { useState } from "react";
 import { ArrowRight, Check, CircleAlert, Fingerprint, Hash, LockKeyhole, ScanText, Shield, ShieldCheck, TriangleAlert } from "lucide-react";
 import { Link } from "wouter";
 import { CodeLabel, PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
-import { useApiResource } from "@/lib/api";
+import { apiRequest, useApiResource } from "@/lib/api";
+import type { GuardInspection } from "@/lib/liveEngine";
 import { demoPrompt, useZeroTraceDemo } from "@/lib/zeroTraceDemo";
 
 type GuardEventList = { items: Array<{ id: string; action: string; outcome: string; auditSequence: number; auditHash: string }> };
@@ -12,6 +13,10 @@ type GuardStatus = { mode: string; proxyEnabled: boolean; regex: string; onnx: s
 export default function Guard() {
   const { stage, audit, events, readiness, isProcessing, runGuard, isConnected, backend } = useZeroTraceDemo();
   const [showFullHash, setShowFullHash] = useState(false);
+  const [guardText, setGuardText] = useState(demoPrompt);
+  const [guardBusy, setGuardBusy] = useState(false);
+  const [guardResult, setGuardResult] = useState<GuardInspection | null>(null);
+  const [guardError, setGuardError] = useState<string | null>(null);
   const eventKey = `${stage}:${events.length}`;
   const guardEvents = useApiResource<GuardEventList>("/guard/events", eventKey);
   const auditStatus = useApiResource<AuditVerification>("/guard/audit/verify", eventKey);
@@ -21,6 +26,22 @@ export default function Guard() {
   const last = audit.at(-1);
   const attackEvent = guardEvents.data?.items[0] ?? events.find((event) => event.type === "attack_blocked");
   const chainValid = auditStatus.data?.valid ?? backend.audit.valid;
+  const inspectPrompt = async () => {
+    setGuardBusy(true);
+    setGuardError(null);
+    setGuardResult(null);
+    try {
+      const result = await apiRequest<GuardInspection>("/engine/guard/inspect", {
+        method: "POST",
+        body: JSON.stringify({ text: guardText }),
+      });
+      setGuardResult(result);
+    } catch (error) {
+      setGuardError(error instanceof Error ? error.message : "The Guard inspection failed.");
+    } finally {
+      setGuardBusy(false);
+    }
+  };
   const pipeline = [
     ["01", "Client key + schema", "Synthetic local fixture; no real key accepted", enabled, "PASS"],
     ["02", "Regex / heuristic filter", "Instruction override signature", blocked, blocked ? "MATCH" : "READY"],
@@ -30,8 +51,42 @@ export default function Guard() {
     ["06", "SQLite audit append", "Separate local file · hash-chain checked by API", blocked, blocked ? "APPENDED" : "WAITING"],
   ] as const;
   return <>
-    <PageHeading eyebrow="ENGINE / 04 · LLM TRAFFIC CONTROL" title="Trace Guard" description="The scenario persists a simulated policy decision and audit metadata through Flask. It does not run as a live OpenAI-compatible proxy." actions={<button className="button button-primary" onClick={() => void runGuard()} disabled={!enabled || blocked || isProcessing}><Shield size={16} />{blocked ? "Attack blocked" : isProcessing ? "Recording decision…" : enabled ? "Simulate prompt attack" : "Waiting for API / Intel"}</button>} />
-    <div className="guard-alert"><TriangleAlert size={18} /><span><b>Simulated policy outcome</b><small>No client key, ONNX model, LLM upstream, or external network is contacted. Only the decision metadata is sent to Flask; the test prompt is not sent.</small></span><StateTag tone={blocked ? "red" : "amber"}>{blocked ? "BLOCKED · DB + SQLITE" : enabled ? "READY · SIMULATED" : "WAITING FOR INTEL"}</StateTag></div>
+    <PageHeading eyebrow="ENGINE / 04 · LLM TRAFFIC CONTROL" title="Trace Guard" description="Inspect a prompt with the live local detector, then review the simulated policy and audit scenario. No upstream model is contacted by the inspection." actions={<button className="button button-primary" onClick={() => void runGuard()} disabled={!enabled || blocked || isProcessing}><Shield size={16} />{blocked ? "Attack blocked" : isProcessing ? "Recording decision…" : enabled ? "Simulate prompt attack" : "Waiting for API / Intel"}</button>} />
+
+    <Panel title="Live Guard inspection" subtitle="Runs the real prompt-injection and PII detectors. The prompt is inspected locally and is not forwarded." tag="INSPECT ONLY">
+      <div className="field">
+        <label htmlFor="guard-live-input">Prompt to inspect</label>
+        <textarea id="guard-live-input" value={guardText} onChange={(event) => setGuardText(event.target.value)} rows={5} spellCheck={false} />
+        <small>Up to 8,000 characters. The detector checks instruction override, jailbreak patterns, and PII.</small>
+      </div>
+      <div className="form-actions">
+        <button className="button button-primary" type="button" onClick={() => void inspectPrompt()} disabled={guardBusy || !guardText.trim()}>
+          <ShieldCheck size={15} />{guardBusy ? "Inspecting…" : "Inspect prompt"}
+        </button>
+      </div>
+      {guardError && <div className="console-alert" role="alert"><TriangleAlert size={15} /><span>{guardError}</span></div>}
+      {guardResult && <div className={`console-alert ${guardResult.blocked ? "" : "success"}`} role="status">
+        {guardResult.blocked ? <Shield size={15} /> : <ShieldCheck size={15} />}
+        <span>
+          <b>{guardResult.blocked ? "Blocked" : "Allowed"}</b>
+          {guardResult.reason ? ` · ${guardResult.reason}` : ""}
+          {guardResult.details ? ` · ${guardResult.details}` : ""}
+          {guardResult.pii.blocked ? " · PII detected" : " · No PII detected"}
+        </span>
+        <CodeLabel>{guardResult.mode}</CodeLabel>
+      </div>}
+    </Panel>
+
+    <Panel title="Guard position" subtitle="Guard sits between the site or application AI and the user prompt. The live detector decides before any upstream call." tag="BETWEEN USER AND MODEL">
+      <div className="kv-list">
+        <div className="kv-row"><span>PATH</span><b>User prompt → Guard → allowlisted upstream</b><small>Blocked prompts never reach the model; allowed responses can be PII-scanned.</small></div>
+        <div className="kv-row"><span>UPSTREAM</span><b>{serviceStatus.data?.upstream ?? "not configured"}</b><small>Self-hosters set an OpenAI-compatible model API through `.env.guard` or a secret manager. Keys never enter this page.</small></div>
+        <div className="kv-row"><span>PROXY</span><b>{serviceStatus.data?.proxyEnabled ? "enabled" : "not running"}</b><small>Loopback-only Guard endpoint. The BFF holds the Guard credential server-side.</small></div>
+        <div className="kv-row"><span>DETECTOR</span><b>{serviceStatus.data?.mode ?? "checking"} · ONNX {serviceStatus.data?.onnx ?? "not loaded"}</b><small>PII scanner: {serviceStatus.data?.piiScanner ?? "unknown"}.</small></div>
+      </div>
+    </Panel>
+
+    <div className="guard-alert"><TriangleAlert size={18} /><span><b>Simulated policy outcome</b><small>This scenario does not contact the upstream. Only the decision metadata is sent to Flask; the test prompt is not sent.</small></span><StateTag tone={blocked ? "red" : "amber"}>{blocked ? "BLOCKED · DB + SQLITE" : enabled ? "READY · SIMULATED" : "WAITING FOR INTEL"}</StateTag></div>
 
     <div className="two-column guard-top-grid">
       <Panel title="Request under inspection" subtitle="OpenAI-compatible shape · harmless UI fixture; not forwarded." tag="SIMULATED REQUEST">
@@ -39,9 +94,9 @@ export default function Guard() {
         <div className="prompt-card"><div><span>USER CONTENT</span><CodeLabel>TEST STRING · UI ONLY</CodeLabel></div><p>“{demoPrompt}”</p><small>Displayed locally for the example; it is not posted to the backend or an LLM.</small></div>
         {blocked && <div className="block-result"><ShieldCheck size={17} /><div><b>Request blocked before upstream</b><small>Reason: high-confidence instruction override pattern · simulated policy version 0.1-demo · {attackEvent?.id}</small></div><StateTag tone="red">BLOCKED · MOCK</StateTag></div>}
       </Panel>
-      <Panel title="Detection pipeline" subtitle="Result is a persisted scenario state; classifier and proxy code are not yet implemented." tag={blocked ? "DECISION RECORDED" : "PIPELINE STAGED"}>
+      <Panel title="Detection pipeline" subtitle="The live detector runs locally. The proxy forwards only allowed prompts to the configured OpenAI-compatible upstream." tag={blocked ? "DECISION RECORDED" : "LIVE DETECTOR"}>
         <div className="guard-pipeline">{pipeline.map(([number, title, detail, complete, result], index) => <div className={`guard-step ${complete ? "guard-step-done" : ""}`} key={number}><span className="guard-step-number">{complete ? <Check size={13} /> : number}</span><div className="guard-step-copy"><b>{title}</b><small>{detail}</small></div><span className={`guard-result result-${result.toLowerCase().replaceAll(" ", "-")}`}>{result}</span>{index < pipeline.length - 1 && <span className="guard-step-line" />}</div>)}</div>
-        <div className="api-detail">API status: {serviceStatus.data?.mode ?? "checking"} · proxy {serviceStatus.data?.proxyEnabled ? "enabled" : "not running"} · ONNX {serviceStatus.data?.onnx ?? "not loaded"}</div>
+        <div className="api-detail">API status: {serviceStatus.data?.mode ?? "checking"} · proxy {serviceStatus.data?.proxyEnabled ? "enabled" : "not running"} · upstream {serviceStatus.data?.upstream ?? "not configured"} · PII {serviceStatus.data?.piiScanner ?? "unknown"} · ONNX {serviceStatus.data?.onnx ?? "not loaded"}</div>
       </Panel>
     </div>
 

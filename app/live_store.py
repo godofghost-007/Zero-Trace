@@ -355,6 +355,12 @@ class LiveStore:
             ).fetchall()
         return [self._scope_from_row(row) for row in rows]
 
+    def delete_scope(self, scope_id: str) -> None:
+        with self._lock, self._session() as connection:
+            connection.execute(
+                "DELETE FROM live_scopes WHERE scope_id = ?", (scope_id,)
+            )
+
     @staticmethod
     def _scope_from_row(row: sqlite3.Row) -> Scope:
         from datetime import datetime

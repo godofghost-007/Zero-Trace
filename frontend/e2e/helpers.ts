@@ -37,7 +37,8 @@ export async function signIn(
 }
 
 export async function expectConsole(page: Page) {
-  await expect(page.getByRole("heading", { name: "One platform. Three traces." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "ZeroTrace", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
 }
 
 export function totp(secret: string, timestamp = Date.now()): string {

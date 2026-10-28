@@ -1,49 +1,267 @@
-import { ArrowRight, BadgeCheck, Check, Clock3, Globe2, KeyRound, Radar, RefreshCcw, ScanLine, Server, ShieldAlert, ShieldCheck } from "lucide-react";
+import { useState } from "react";
+import {
+  ArrowRight,
+  Check,
+  Clock3,
+  Crosshair,
+  Globe2,
+  Radar,
+  RefreshCcw,
+  ScanLine,
+  Server,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
 import { Link } from "wouter";
 import { CodeLabel, PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
 import { useApiResource } from "@/lib/api";
-import { demoAsset, useZeroTraceDemo, type DemoAsset } from "@/lib/zeroTraceDemo";
+import { useSelectedTarget } from "@/lib/selectedTarget";
+import {
+  PROFILE_SHORT_LABELS,
+  scanTone,
+  takeoverSignal,
+  type EngineStatus,
+  type TargetRecord,
+  type TargetRecordList,
+  type TargetScanRecord,
+} from "@/lib/liveEngine";
 
-type AssetList = { items: Array<DemoAsset & { createdAt?: string }> };
-type ScanList = { items: Array<{ id: string; scope: string; status: string; partial: boolean; warnings: string[] }> };
+const PAGE_SIZE = 10;
+
+function scanFor(record: TargetRecord | null, prefix: string): TargetScanRecord | null {
+  if (!record) return null;
+  return [...record.scans].reverse().find((scan) => scan.profileId.startsWith(prefix)) ?? null;
+}
+
+function uniqueServices(record: TargetRecord | null) {
+  if (!record) return [];
+  return [
+    ...new Map(
+      record.scans.flatMap((scan) => scan.services).map((service) => [
+        `${service.asset}|${service.protocol}|${service.port}|${service.product ?? ""}|${service.version ?? ""}`,
+        service,
+      ] as const),
+    ).values(),
+  ];
+}
+
+function uniqueAssets(record: TargetRecord | null) {
+  if (!record) return [];
+  return [...new Set(record.scans.flatMap((scan) => scan.assets))];
+}
+
+function uniqueTls(record: TargetRecord | null) {
+  if (!record) return [];
+  return [
+    ...new Map(
+      record.scans.flatMap((scan) => scan.tlsFindings).map((finding) => [
+        `${finding.subject}|${finding.issuer}|${finding.expires_at}|${finding.status}`,
+        finding,
+      ] as const),
+    ).values(),
+  ];
+}
+
+function stateOf(scan: TargetScanRecord | null): string {
+  return scan?.state ?? "not_run";
+}
 
 export default function Recon() {
-  const { stage, runRecon, isConnected, isProcessing, backend } = useZeroTraceDemo();
-  const complete = stage >= 1;
-  const assetQuery = useApiResource<AssetList>("/assets", stage);
-  const scanQuery = useApiResource<ScanList>("/recon/scans", stage);
-  const storedAsset = assetQuery.data?.items[0] ?? null;
-  const currentAsset = storedAsset ?? demoAsset;
-  const steps = [
-    ["01", "Scope approval", "scope_demo_lab_01 · explicit allowlist", complete, "AUTHORIZED SAMPLE"],
-    ["02", "Passive discovery", "Certificate/DNS adapter fixture", complete, "FIXTURE"],
-    ["03", "Service inventory", "TCP/443 HTTPS · TCP/22 SSH", complete, "TOP-100 PROFILE (MOCK)"],
-    ["04", "TLS + cloud checks", "TLS fixture valid · S3 not queried", complete, complete ? "PARTIAL · S3 UNKNOWN" : "NO CLOUD ACCESS"],
-    ["05", "Inventory delta", "New unmanaged candidate → local database", complete, "SAMPLE CHANGE"],
-    ["06", "Commit + outbox", "asset_created → pending event outbox", complete, "SIMULATED"],
-  ] as const;
-  return <>
-    <PageHeading eyebrow="ENGINE / 02 · ATTACK SURFACE" title="Trace Recon" description="Discover authorized assets and exposed services, retain provenance, and hand normalized observations to Intel. The connected demo writes a fixed fixture; it never launches a scanner." actions={<button className="button button-primary" onClick={() => void runRecon()} disabled={!isConnected || complete || isProcessing}><Radar size={16} />{isProcessing ? "Saving fixture…" : complete ? "Sample discovered" : isConnected ? "Run sample discovery" : "Waiting for API"}</button>} />
-    <div className="safety-banner"><ShieldCheck size={18} /><span><b>Scope locked to a fictional `.test` hostname.</b><small>No Subfinder, Nmap, DNS, TLS, or S3 request is made. Flask writes only the preset fixture shown below.</small></span><CodeLabel>scope_demo_lab_01</CodeLabel></div>
-    <div className="engine-summary-grid"><div className="engine-summary"><span>SCAN RUN</span><b>{scanQuery.data?.items[0]?.id ?? "RUN-DEMO-0081"}</b><small>{complete ? `${scanQuery.data?.items[0]?.status ?? "Completed"} · simulated` : "Ready · no process started"}</small></div><div className="engine-summary"><span>TARGET</span><b>portal.zt-lab.test</b><small>Reserved demo domain · authorized fixture</small></div><div className="engine-summary"><span>RESULTS</span><b>{complete ? "1 asset · 2 services" : "Waiting"}</b><small>{complete ? `Persisted in ${backend.database.toUpperCase()}` : "Click Run sample discovery"}</small></div><div className="engine-summary"><span>PROVENANCE</span><b>Fixture set A</b><small>{complete ? "Database provenance recorded" : "No scanner process invoked"}</small></div></div>
+  const { selection, revision } = useSelectedTarget();
+  const [refresh, setRefresh] = useState(0);
+  const [assetPage, setAssetPage] = useState(0);
+  const [servicePage, setServicePage] = useState(0);
+  const [tlsPage, setTlsPage] = useState(0);
+  const [warningPage, setWarningPage] = useState(0);
+  const recordsQuery = useApiResource<TargetRecordList>("/engine/records", revision + refresh);
+  const statusQuery = useApiResource<EngineStatus>("/engine/status", revision + refresh);
+  const status = statusQuery.data;
+  const records = recordsQuery.data?.items ?? [];
+  const record = selection
+    ? records.find((item) => item.target === selection.target && item.scopeId === selection.scopeId)
+      ?? records.find((item) => item.target === selection.target)
+      ?? null
+    : null;
+  const assets = uniqueAssets(record);
+  const services = uniqueServices(record);
+  const tlsFindings = uniqueTls(record);
+  const nmap = scanFor(record, "service_inventory");
+  const subfinder = scanFor(record, "passive_subdomain");
+  const tls = scanFor(record, "tls_metadata");
+  const synthetic = scanFor(record, "synthetic_inventory");
+  const warnings = record?.scans.flatMap((scan) => scan.warnings) ?? [];
+  const assetPages = Math.max(1, Math.ceil(assets.length / PAGE_SIZE));
+  const servicePages = Math.max(1, Math.ceil(services.length / PAGE_SIZE));
+  const tlsPages = Math.max(1, Math.ceil(tlsFindings.length / PAGE_SIZE));
+  const warningPages = Math.max(1, Math.ceil(warnings.length / PAGE_SIZE));
+  const safeAssetPage = Math.min(assetPage, assetPages - 1);
+  const safeServicePage = Math.min(servicePage, servicePages - 1);
+  const safeTlsPage = Math.min(tlsPage, tlsPages - 1);
+  const safeWarningPage = Math.min(warningPage, warningPages - 1);
+  const pagedAssets = assets.slice(safeAssetPage * PAGE_SIZE, (safeAssetPage + 1) * PAGE_SIZE);
+  const pagedServices = services.slice(safeServicePage * PAGE_SIZE, (safeServicePage + 1) * PAGE_SIZE);
+  const pagedTls = tlsFindings.slice(safeTlsPage * PAGE_SIZE, (safeTlsPage + 1) * PAGE_SIZE);
+  const pagedWarnings = warnings.slice(safeWarningPage * PAGE_SIZE, (safeWarningPage + 1) * PAGE_SIZE);
 
-    <div className="two-column engine-main-grid">
-      <Panel title="Recon pipeline" subtitle="Stages are recorded through the Flask API; cloud checks remain explicitly partial." tag={complete ? "COMPLETE · PARTIAL" : "IDLE · MOCK"}>
-        <div className="pipeline-list">{steps.map(([number, title, detail, done, badge]) => <div className={`pipeline-row ${done ? "pipeline-done" : ""} ${badge.startsWith("PARTIAL") ? "pipeline-partial" : ""}`} key={number}><span className="pipeline-num">{done ? <Check size={14} /> : number}</span><div className="pipeline-copy"><b>{title}</b><small>{detail}</small></div><span className="pipeline-badge">{done ? badge : "WAITING"}</span></div>)}</div>
-        <div className="pipeline-caption"><RefreshCcw size={14} /> Future scanner workers need approved scope, hard timeouts, cancellation, bounded output and durable partial-failure records.</div>
+  const pipeline = [
+    { id: "scope", title: "Scope approval", detail: selection?.scopeId ?? "No scope", state: selection ? "completed" : "not_run", icon: ShieldCheck },
+    { id: "nmap", title: "Nmap services", detail: nmap ? PROFILE_SHORT_LABELS[nmap.profileId] ?? nmap.profileId : "Not run", state: stateOf(nmap), icon: ScanLine },
+    { id: "subfinder", title: "Subfinder hosts", detail: subfinder ? PROFILE_SHORT_LABELS[subfinder.profileId] ?? subfinder.profileId : "Not run", state: stateOf(subfinder), icon: Globe2 },
+    { id: "tls", title: "TLS metadata", detail: tls ? "TLS read" : "Not run", state: stateOf(tls), icon: ShieldCheck },
+    { id: "synthetic", title: "Synthetic inventory", detail: synthetic ? "Synthetic fixture" : "Not run", state: stateOf(synthetic), icon: Server },
+    { id: "intel", title: "Intel handoff", detail: status?.intel.findings ? `${status.intel.findings} finding(s)` : "Awaiting evidence", state: status?.intel.findings ? "completed" : "queued", icon: Radar },
+  ] as const;
+
+  return <>
+    <PageHeading
+      eyebrow="TRACE RECON / 01 · SURFACE"
+      title="Trace Recon"
+      description="The recon pipeline and discovered assets for the target selected in ZeroTrace. Everything here is read from persisted, bounded scan records."
+      actions={
+        <div className="form-actions">
+          <StateTag tone={record ? "green" : "neutral"}>{record ? "TARGET LOADED" : "NO TARGET"}</StateTag>
+          <button className="button button-ghost button-small" type="button" onClick={() => setRefresh((value) => value + 1)}>
+            <RefreshCcw size={14} /> Refresh
+          </button>
+        </div>
+      }
+    />
+
+    {!selection ? (
+      <Panel title="No target selected" subtitle="Run a saved target from ZeroTrace first." tag="START AT 00">
+        <div className="empty-console">
+          <Crosshair size={22} />
+          <b>Trace Recon is waiting for a target</b>
+          <p>ZeroTrace writes the selected target, scope, and scan levels into the shared session state.</p>
+          <Link href="/" className="button button-primary">Open ZeroTrace <ArrowRight size={15} /></Link>
+        </div>
       </Panel>
-      <Panel title="Discovered asset" subtitle="Current persisted record; written before its `asset_created` outbox event." tag={backend.database.toUpperCase()}>
-        {complete ? <>
-          <div className="asset-title"><div className="asset-icon"><Globe2 size={19} /></div><div><CodeLabel>{currentAsset.id}</CodeLabel><h3>{currentAsset.hostname}</h3><small>{currentAsset.environment} · {currentAsset.scope}</small></div><StateTag tone="amber">UNMANAGED CANDIDATE</StateTag></div>
-          <div className="service-table"><div className="service-header"><span>PORT</span><span>PROTO</span><span>SERVICE</span><span>OBSERVATION</span></div>{currentAsset.services.map((service) => <div className="service-line" key={service.port}><b>{service.port}</b><span>{service.protocol}</span><span>{service.name}</span><small>{service.version}</small></div>)}</div>
-          <div className="asset-notes"><div><BadgeCheck size={15} /><span>TLS certificate</span><b>Valid · fixture</b></div><div><ShieldAlert size={15} /><span>Cloud bucket checks</span><b>Unknown · not queried</b></div><div><Clock3 size={15} /><span>Last seen</span><b>{storedAsset?.createdAt ? new Date(storedAsset.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "Demo fixture"}</b></div></div>
-          <div className="partial-result-note"><ShieldAlert size={15} /><span><b>Partial result:</b> optional cloud/S3 adapter is not configured; this field remains unknown and no bucket was contacted.</span></div>
-        </> : <div className="empty-demo"><ScanLine size={22} /><b>No sample run yet</b><p>Run the sample discovery to persist a fictional asset and create its correlated outbox event.</p></div>}
-      </Panel>
-    </div>
-    <Panel title="Engine safeguards" subtitle="Controls that belong in a real scanner adapter — not merely in the UI." tag="DESIGN CONTRACT">
-      <div className="safeguard-grid"><div><KeyRound size={17} /><b>Explicit scope</b><p>Reject targets outside operator-approved domains/CIDRs before any process starts.</p></div><div><Server size={17} /><b>Argument arrays</b><p>Invoke scanner processes without shell interpolation or arbitrary user-supplied flags.</p></div><div><Clock3 size={17} /><b>Bounded work</b><p>Timeout, cancel, rate-limit, cap output, and retain structured partial/failure state.</p></div></div>
-    </Panel>
-    <div className="next-engine"><span><b>Next trace:</b> Intel reads the committed asset from the Flask API.</span><Link href="/intel" className="text-link">Open Trace Intel <ArrowRight size={15} /></Link></div>
+    ) : (
+      <>
+        <div className="data-banner">
+          <ShieldCheck size={18} />
+          <span>
+            <b>{selection.target} · {selection.scopeId}</b>
+            <small>Nmap {selection.nmapLevel} · Subfinder {selection.subfinderLevel}. The pipeline reads the latest persisted record for each profile.</small>
+          </span>
+          <CodeLabel>LOOPBACK ENGINE</CodeLabel>
+        </div>
+
+        {recordsQuery.error && <div className="console-alert" role="alert"><ShieldAlert size={15} /><span>{recordsQuery.error}</span></div>}
+
+        <Panel title="Recon pipeline" subtitle="Each stage is a bounded read. A missing stage is shown as not run, never as success." tag="PIPELINE">
+          <div className="pipeline-grid">
+            {pipeline.map(({ id, title, detail, state, icon: Icon }) => (
+              <div className={`pipeline-step pipeline-${state}`} key={id}>
+                <div className="pipeline-icon"><Icon size={18} /></div>
+                <div>
+                  <b>{title}</b>
+                  <small>{detail}</small>
+                </div>
+                <StateTag tone={scanTone(state)}>{state.replaceAll("_", " ").toUpperCase()}</StateTag>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <div className="metric-row recon-metrics">
+          <div className="metric-card"><span>DISCOVERED ASSETS</span><strong>{assets.length}</strong><em>unique hostnames</em></div>
+          <div className="metric-card"><span>OPEN SERVICES</span><strong>{services.length}</strong><em>service records</em></div>
+          <div className="metric-card"><span>TLS RECORDS</span><strong>{tlsFindings.length}</strong><em>metadata only</em></div>
+          <div className="metric-card"><span>WARNINGS</span><strong>{warnings.length}</strong><em>bounded output</em></div>
+        </div>
+
+        <div className="two-column">
+          <Panel title="Discovered assets" subtitle="Hostnames from passive profiles. Suffix labels are review-only; no DNS or HTTP probe is sent." tag={`${assets.length} ASSETS`}>
+            {assets.length === 0 ? (
+              <div className="empty-console"><Globe2 size={22} /><b>No assets recorded</b><p>Run Subfinder or synthetic inventory from ZeroTrace.</p></div>
+            ) : (
+              <>
+                <div className="kv-list">
+                  {pagedAssets.map((asset) => (
+                    <div className="kv-row" key={asset}><span>HOST</span><b>{asset}</b><small>{takeoverSignal(asset) ?? "passive host"}</small></div>
+                  ))}
+                </div>
+                <Pagination page={safeAssetPage} pages={assetPages} onPrevious={() => setAssetPage(Math.max(0, safeAssetPage - 1))} onNext={() => setAssetPage(Math.min(assetPages - 1, safeAssetPage + 1))} />
+              </>
+            )}
+          </Panel>
+
+          <Panel title="Open services" subtitle="Port, protocol, and detected product. Ten per page." tag={`${services.length} SERVICES`}>
+            {services.length === 0 ? (
+              <div className="empty-console"><ScanLine size={22} /><b>No open services recorded</b><p>Run Nmap from ZeroTrace. Normal scans use the bounded critical-port profile.</p></div>
+            ) : (
+              <>
+                <div className="kv-list">
+                  {pagedServices.map((service, index) => (
+                    <div className="kv-row" key={`${service.asset}-${service.protocol}-${service.port}-${index}`}>
+                      <span>{service.protocol.toUpperCase()} / {service.port}</span>
+                      <b>{service.asset} · {service.product ?? "unknown"}{service.version ? ` ${service.version}` : ""}</b>
+                      <small>open service</small>
+                    </div>
+                  ))}
+                </div>
+                <Pagination page={safeServicePage} pages={servicePages} onPrevious={() => setServicePage(Math.max(0, safeServicePage - 1))} onNext={() => setServicePage(Math.min(servicePages - 1, safeServicePage + 1))} />
+              </>
+            )}
+          </Panel>
+        </div>
+
+        <div className="two-column">
+          <Panel title="TLS metadata" subtitle="Subject, issuer, expiry, and validation status. No certificate contents are stored." tag={`${tlsFindings.length} RECORDS`}>
+            {tlsFindings.length === 0 ? <div className="empty-console"><ShieldCheck size={22} /><b>No TLS record</b><p>Run the TLS metadata profile from ZeroTrace.</p></div> : (
+              <>
+                <div className="kv-list">
+                  {pagedTls.map((finding) => (
+                    <div className="kv-row" key={`${finding.subject}-${finding.expires_at}`}>
+                      <span>TLS</span><b>{finding.subject}</b><small>{finding.status} certificate</small>
+                    </div>
+                  ))}
+                </div>
+                <Pagination page={safeTlsPage} pages={tlsPages} onPrevious={() => setTlsPage(Math.max(0, safeTlsPage - 1))} onNext={() => setTlsPage(Math.min(tlsPages - 1, safeTlsPage + 1))} />
+              </>
+            )}
+          </Panel>
+
+          <Panel title="Run state" subtitle="Warnings and profile states from the latest persisted scans." tag="EVIDENCE">
+            <div className="kv-list">
+              <div className="kv-row"><span>NMAP</span><b>{stateOf(nmap)}</b><small>{nmap?.scanId ?? "no scan"}</small></div>
+              <div className="kv-row"><span>SUBFINDER</span><b>{stateOf(subfinder)}</b><small>{subfinder?.scanId ?? "no scan"}</small></div>
+              <div className="kv-row"><span>TLS</span><b>{stateOf(tls)}</b><small>{tls?.scanId ?? "no scan"}</small></div>
+              <div className="kv-row"><span>SYNTHETIC</span><b>{stateOf(synthetic)}</b><small>{synthetic?.scanId ?? "no scan"}</small></div>
+            </div>
+            {warnings.length > 0 ? (
+              <>
+                <div className="warning-list">
+                  {pagedWarnings.map((warning, index) => <div className="small-warning" key={`${warning}-${index}`}><Clock3 size={14} /><span>{warning}</span></div>)}
+                </div>
+                <Pagination page={safeWarningPage} pages={warningPages} onPrevious={() => setWarningPage(Math.max(0, safeWarningPage - 1))} onNext={() => setWarningPage(Math.min(warningPages - 1, safeWarningPage + 1))} />
+              </>
+            ) : <div className="small-warning"><Check size={14} /><span>No scan warnings on the latest records.</span></div>}
+          </Panel>
+        </div>
+
+        <Panel title="Next: Intel Guard" subtitle="The same asset IDs are correlated against NVD, EPSS, and KEV." tag="HANDOFF">
+          <div className="workflow-strip">
+            <div><span>01</span><b>Assets</b><small>{assets.length} hostname(s)</small></div>
+            <ArrowRight size={16} />
+            <div><span>02</span><b>Vulnerabilities</b><small>Matched CVEs per service</small></div>
+            <ArrowRight size={16} />
+            <div><span>03</span><b>Priority</b><small>CVSS · EPSS · KEV</small></div>
+            <ArrowRight size={16} />
+            <Link href="/intel" className="button button-primary">Open Intel Guard <ArrowRight size={15} /></Link>
+          </div>
+        </Panel>
+      </>
+    )}
   </>;
+}
+
+function Pagination({ page, pages, onPrevious, onNext }: { page: number; pages: number; onPrevious: () => void; onNext: () => void }) {
+  if (pages <= 1) return null;
+  return <div className="form-actions">
+    <button className="button button-ghost button-small" type="button" onClick={onPrevious} disabled={page === 0}>Previous</button>
+    <span className="pagination-label">{page + 1} / {pages}</span>
+    <button className="button button-ghost button-small" type="button" onClick={onNext} disabled={page === pages - 1}>Next</button>
+  </div>;
 }

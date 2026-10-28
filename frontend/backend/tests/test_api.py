@@ -113,3 +113,6 @@ def test_read_apis_expose_shared_records_and_pending_outbox(client):
     events = client.get("/api/v1/events").json
     assert events["pending"] == len(events["items"])
     assert events["bus"]["state"] == "not_configured"
+    asset_event = next(item for item in events["items"] if item["type"] == "asset_created")
+    assert asset_event["scopeId"] == "scope_demo_lab_01"
+    assert asset_event["target"] == "portal.zt-lab.test"
