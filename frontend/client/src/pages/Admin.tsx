@@ -1,19 +1,21 @@
 import { useState } from "react";
-import { Cable, Crosshair, Database, Layers, ShieldAlert } from "lucide-react";
+import { Cable, Crosshair, Database, KeyRound, Layers, ShieldAlert } from "lucide-react";
 import { PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
 import EngineConnection from "@/components/EngineConnection";
+import PasswordChange from "@/components/PasswordChange";
 import { useAuth } from "@/lib/auth";
 import Architecture from "@/pages/Architecture";
 import DatabasePage from "@/pages/Database";
 import Targets from "@/pages/Targets";
 
-type AdminTab = "engine" | "architecture" | "targets" | "database";
+type AdminTab = "engine" | "architecture" | "targets" | "database" | "account";
 
 const tabs: Array<{ id: AdminTab; label: string; icon: typeof Cable }> = [
   { id: "engine", label: "Engine connection", icon: Cable },
   { id: "architecture", label: "Architecture", icon: Layers },
   { id: "targets", label: "Targets & scope", icon: Crosshair },
   { id: "database", label: "Database & events", icon: Database },
+  { id: "account", label: "Account", icon: KeyRound },
 ];
 
 export default function Admin() {
@@ -42,7 +44,7 @@ export default function Admin() {
     <PageHeading
       eyebrow="ADMIN / 05 · CONTROL PLANE"
       title="Admin"
-      description="Device context, engine connection, authorized targets, and the evidence store. Everything stays on this loopback installation."
+      description="Device context, engine connection, authorized targets, the evidence store, and the local operator account. Everything stays on this loopback installation."
       actions={<StateTag tone="green">LOCAL ADMIN</StateTag>}
     />
 
@@ -65,5 +67,6 @@ export default function Admin() {
     {tab === "architecture" && <Architecture embedded />}
     {tab === "targets" && <Targets embedded />}
     {tab === "database" && <DatabasePage embedded />}
+    {tab === "account" && <PasswordChange />}
   </>;
 }

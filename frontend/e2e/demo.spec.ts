@@ -39,4 +39,9 @@ test("the new console exposes the ZeroTrace flow and Guard inspection", async ({
   await expect(page.getByRole("tab", { name: "Architecture" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Targets & scope" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Database & events" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Account" })).toBeVisible();
+  await page.getByRole("tab", { name: "Account" }).click();
+  await expect(page.getByLabel("Current password")).toBeVisible();
+  await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Confirm new password")).toBeVisible();
 });

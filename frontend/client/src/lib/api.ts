@@ -36,7 +36,8 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
       response.status === 401 &&
       path !== "/auth/login" &&
       path !== "/auth/session" &&
-      path !== "/auth/mfa/verify"
+      path !== "/auth/mfa/verify" &&
+      path !== "/auth/password"
     ) {
       window.dispatchEvent(new Event("zt-auth-required"));
     }
