@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Cable, KeyRound, PlugZap, Save, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Link } from "wouter";
 import { PageHeading, Panel, StateTag } from "@/components/DemoPrimitives";
 import { apiRequest, useApiResource } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -83,6 +84,14 @@ export default function Settings() {
         <small>Demo mode keeps every page on fixtures. Live mode is used by Targets &amp; scope to create an approved scope and run allowlisted reads. The engine must be running on this machine.</small>
       </span>
     </div>
+
+    <Panel title="Settings pages" subtitle="Architecture, targets, and database tools live here." tag="SETTINGS">
+      <div className="form-actions">
+        <Link className="button button-ghost" href="/architecture">Architecture</Link>
+        <Link className="button button-ghost" href="/targets">Targets & scope</Link>
+        <Link className="button button-ghost" href="/database">Database & events</Link>
+      </div>
+    </Panel>
 
     <div className="two-column">
       <Panel

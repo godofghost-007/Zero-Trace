@@ -5,13 +5,10 @@ import { useAuth } from "@/lib/auth";
 import { useZeroTraceDemo } from "@/lib/zeroTraceDemo";
 
 const nav = [
-  { href: "/", label: "Architecture", icon: Activity, code: "00" },
-  { href: "/database", label: "Database & events", icon: Database, code: "01" },
-  { href: "/recon", label: "Trace Recon", icon: Radar, code: "02" },
-  { href: "/intel", label: "Trace Intel", icon: FileText, code: "03" },
-  { href: "/guard", label: "Trace Guard", icon: Shield, code: "04" },
-  { href: "/targets", label: "Targets & scope", icon: Crosshair, code: "05" },
-  { href: "/settings", label: "Engine settings", icon: Settings2, code: "06" },
+  { href: "/recon", label: "Trace Recon", icon: Radar, code: "00" },
+  { href: "/intel", label: "Intel Guard", icon: FileText, code: "01" },
+  { href: "/guard", label: "Trace Guard", icon: Shield, code: "02" },
+  { href: "/settings", label: "Settings", icon: Settings2, code: "03" },
 ];
 
 export default function DemoShell({ children }: { children: ReactNode }) {

@@ -20,7 +20,8 @@ function Router() {
   return (
     <DemoShell>
       <Switch>
-        <Route path="/" component={Architecture} />
+        <Route path="/" component={Recon} />
+        <Route path="/architecture" component={Architecture} />
         <Route path="/database" component={Database} />
         <Route path="/recon" component={Recon} />
         <Route path="/intel" component={Intel} />
