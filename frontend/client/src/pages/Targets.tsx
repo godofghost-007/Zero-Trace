@@ -16,8 +16,8 @@ function messageOf(error: unknown): string {
 }
 
 const DEFAULT_PROFILES = [
-  "service_inventory_normal_v1",
-  "passive_subdomain_normal_v1",
+  "service_inventory_v1",
+  "passive_subdomain_v1",
   "tls_metadata_v1",
   "synthetic_inventory_v1",
 ];
@@ -160,7 +160,7 @@ export default function Targets({ embedded = false }: { embedded?: boolean }) {
             </div>
           </div>
           <div className="saved-profile-strip">
-            <span>DEFAULT PROFILES</span>
+            <span>DEFAULT SERVICES</span>
             {availableProfiles.length ? availableProfiles.map((profileId) => (
               <CodeLabel key={profileId}>{PROFILE_SHORT_LABELS[profileId] ?? profileId}</CodeLabel>
             )) : <CodeLabel>NO PROFILES</CodeLabel>}
@@ -225,7 +225,7 @@ export default function Targets({ embedded = false }: { embedded?: boolean }) {
       <div className="workflow-strip">
         <div><span>01</span><b>Save target</b><small>Admin creates a bounded scope.</small></div>
         <ArrowRight size={16} />
-        <div><span>02</span><b>Run in ZeroTrace</b><small>Choose Nmap and Subfinder levels.</small></div>
+        <div><span>02</span><b>Run in ZeroTrace</b><small>Choose any of the four services.</small></div>
         <ArrowRight size={16} />
         <div><span>03</span><b>Read evidence</b><small>Recon, Intel, and Database views update.</small></div>
       </div>

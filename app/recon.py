@@ -12,7 +12,8 @@ import threading
 import time
 from collections import defaultdict, deque
 from typing import Callable, Mapping, Protocol
-from urllib.parse import urlsplit
+import urllib.request
+from urllib.parse import quote, urlsplit
 import xml.etree.ElementTree as ElementTree
 from uuid import uuid4
 
@@ -140,7 +141,7 @@ PROFILES: Mapping[str, ReconProfile] = {
         "synthetic_inventory_v1", "synthetic", 30, 10, 64 * 1024, 100, 60
     ),
     "passive_subdomain_v1": ReconProfile(
-        "passive_subdomain_v1", "subfinder", 120, 10, 32 * 1024 * 1024, 100_000, 60
+        "passive_subdomain_v1", "subfinder", 180, 10, 32 * 1024 * 1024, 100_000, 60
     ),
     "passive_subdomain_normal_v1": ReconProfile(
         "passive_subdomain_normal_v1",
@@ -183,7 +184,7 @@ PROFILES: Mapping[str, ReconProfile] = {
         level="deep",
     ),
     "service_inventory_v1": ReconProfile(
-        "service_inventory_v1", "nmap", 300, 100, 4 * 1024 * 1024, 10_000, 60
+        "service_inventory_v1", "nmap", 900, 100, 16 * 1024 * 1024, 10_000, 60
     ),
     "service_inventory_normal_v1": ReconProfile(
         "service_inventory_normal_v1",
@@ -625,6 +626,118 @@ class SubfinderAdapter:
         return AdapterResult(tuple(assets), (), tuple(warnings), state)
 
 
+def _fetch_crtsh(
+    domain: str, timeout_seconds: int, max_output_bytes: int
+) -> bytes:
+    """Fetch passive certificate-transparency records for a domain.
+
+    This is the passive half of the operator-provided subfinder.py script. It
+    queries crt.sh only; it does not resolve the target, probe the target, or
+    make any HTTP request to the target itself.
+    """
+
+    url = f"https://crt.sh/?q=%25.{quote(domain, safe='')}&output=json"
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "ZeroTrace-passive-ct/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        payload = response.read(max_output_bytes + 1)
+    if len(payload) > max_output_bytes:
+        raise ReconError("passive source output exceeds the configured limit")
+    return payload
+
+
+class CtLogSubfinderAdapter:
+    """Passive subdomain discovery through certificate-transparency logs.
+
+    The operator-provided subfinder.py also performs active DNS resolution.
+    That step is intentionally omitted here: Subfinder stays passive, and the
+    only network read is the third-party CT log query.
+    """
+
+    def __init__(
+        self,
+        fetcher: Callable[[str, int, int], bytes] | None = None,
+        *,
+        retries: int = 3,
+        retry_delay_seconds: float = 2.0,
+    ) -> None:
+        self.fetcher = fetcher or _fetch_crtsh
+        self.retries = max(1, retries)
+        self.retry_delay_seconds = max(0.0, retry_delay_seconds)
+
+    def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
+        payload: bytes | None = None
+        for attempt in range(self.retries):
+            try:
+                payload = self.fetcher(
+                    target.value,
+                    min(30, profile.timeout_seconds),
+                    profile.max_output_bytes,
+                )
+                break
+            except Exception:
+                if attempt + 1 >= self.retries:
+                    return AdapterResult(
+                        (),
+                        (),
+                        ("passive source unavailable",),
+                        ReconRunState.PARTIAL,
+                    )
+                if self.retry_delay_seconds:
+                    time.sleep(self.retry_delay_seconds)
+
+        try:
+            records = json.loads(payload or b"[]")
+        except (TypeError, ValueError):
+            return AdapterResult(
+                (),
+                (),
+                ("passive source response is malformed",),
+                ReconRunState.PARTIAL,
+            )
+        if not isinstance(records, list):
+            return AdapterResult(
+                (),
+                (),
+                ("passive source response is malformed",),
+                ReconRunState.PARTIAL,
+            )
+
+        assets: set[str] = set()
+        warnings: list[str] = []
+        limit_reached = False
+        for entry in records:
+            if not isinstance(entry, dict):
+                warnings.append("malformed passive-discovery record")
+                continue
+            name_value = entry.get("name_value", "")
+            if not isinstance(name_value, str):
+                warnings.append("malformed passive-discovery record")
+                continue
+            for raw_name in name_value.splitlines():
+                name = raw_name.strip().lower()
+                if not name:
+                    continue
+                if name.startswith("*."):
+                    name = name[2:]
+                if name != target.value and not name.endswith("." + target.value):
+                    continue
+                if len(assets) >= profile.max_results:
+                    warnings.append("passive discovery result limit reached")
+                    limit_reached = True
+                    break
+                assets.add(name)
+            if limit_reached:
+                break
+
+        if not assets and not warnings:
+            warnings.append("no passive records discovered")
+        state = ReconRunState.PARTIAL if warnings else ReconRunState.COMPLETED
+        return AdapterResult(tuple(sorted(assets)), (), tuple(dict.fromkeys(warnings)), state)
+
+
 # The scanner is intentionally limited to an explicit, small set of high-value
 # service ports. This keeps the active scan bounded and avoids broad internet
 # port sweeps.
@@ -701,6 +814,140 @@ class NmapAdapter:
             )
         warnings = ("no ports observed / may be filtered",) if not services else ()
         return AdapterResult((target.value,), tuple(services), warnings)
+
+
+def _parse_nmap_root(output: bytes) -> ElementTree.Element:
+    try:
+        return ElementTree.fromstring(output)
+    except ElementTree.ParseError as error:
+        raise ReconError("scanner XML is malformed") from error
+
+
+def _open_port_numbers(root: ElementTree.Element) -> tuple[int, ...]:
+    ports: list[int] = []
+    for port in root.findall(".//port"):
+        state = port.find("state")
+        if state is None or state.attrib.get("state") != "open":
+            continue
+        try:
+            number = int(port.attrib["portid"])
+        except (KeyError, ValueError) as error:
+            raise ReconError("scanner port is malformed") from error
+        if not 1 <= number <= 65_535:
+            raise ReconError("scanner port is invalid")
+        if number not in ports:
+            ports.append(number)
+    return tuple(ports)
+
+
+def _parse_open_services(
+    root: ElementTree.Element, target: str
+) -> tuple[tuple[str, str, int, str, str | None], ...]:
+    services: list[tuple[str, str, int, str, str | None]] = []
+    for port in root.findall(".//port"):
+        state = port.find("state")
+        if state is None or state.attrib.get("state") != "open":
+            continue
+        try:
+            number = int(port.attrib["portid"])
+        except (KeyError, ValueError) as error:
+            raise ReconError("scanner port is malformed") from error
+        if not 1 <= number <= 65_535:
+            raise ReconError("scanner port is invalid")
+        service = port.find("service")
+        name = "unknown" if service is None else service.attrib.get("name", "unknown")
+        product = "unknown" if service is None else service.attrib.get("product", name)
+        version = None if service is None else service.attrib.get("version")
+        services.append(
+            (
+                target,
+                port.attrib.get("protocol", "tcp"),
+                number,
+                product,
+                version,
+            )
+        )
+    return tuple(services)
+
+
+class NmapScriptAdapter:
+    """Two-stage Nmap flow adapted from the operator-provided nmap.py.
+
+    Stage one performs a bounded discovery sweep over the fixed high-value port
+    list. Stage two runs service/version and vulnerability scripts only against
+    the ports that were actually open, which keeps the scan focused and avoids
+    spending the full timeout on closed ports.
+    """
+
+    def __init__(
+        self,
+        executable: str,
+        runner: CommandRunner,
+        *,
+        ports: str | None = None,
+    ) -> None:
+        self.executable = executable
+        self.runner = runner
+        self.target_ports = _validate_ports(ports) or NMAP_TARGET_PORTS
+
+    def run(self, target: Target, profile: ReconProfile) -> AdapterResult:
+        discovery = self.runner.run(
+            (
+                self.executable,
+                "-sT",
+                "-Pn",
+                "-T4",
+                "--min-rate",
+                "1000",
+                "--max-retries",
+                "1",
+                "--open",
+                "-p",
+                self.target_ports,
+                "-oX",
+                "-",
+                target.value,
+            ),
+            min(profile.timeout_seconds, 120),
+            profile.max_output_bytes,
+        )
+        open_ports = _open_port_numbers(_parse_nmap_root(discovery))
+        if not open_ports:
+            return AdapterResult(
+                (target.value,),
+                (),
+                ("no open ports observed / may be filtered",),
+                ReconRunState.PARTIAL,
+            )
+
+        deep_scan = self.runner.run(
+            (
+                self.executable,
+                "-sT",
+                "-Pn",
+                "-T4",
+                "-sV",
+                "--version-light",
+                "--script",
+                "vuln",
+                "--script-timeout",
+                "20s",
+                "--host-timeout",
+                "10m",
+                "--stats-every",
+                "15s",
+                "-p",
+                ",".join(str(port) for port in open_ports),
+                "-oX",
+                "-",
+                target.value,
+            ),
+            profile.timeout_seconds,
+            profile.max_output_bytes,
+        )
+        services = _parse_open_services(_parse_nmap_root(deep_scan), target.value)
+        warnings = ("no ports observed / may be filtered",) if not services else ()
+        return AdapterResult((target.value,), services, warnings)
 
 
 class ReadOnlyS3Adapter:

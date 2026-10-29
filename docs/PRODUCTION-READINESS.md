@@ -23,14 +23,18 @@ missing core logic.
 
 - **Full-stack wiring**: the browser talks only to Flask; Flask holds the engine
   API key and forwards to a loopback-only FastAPI engine.
-- **Real Recon adapters**: four Nmap levels (Normal through Deep), four
-  Subfinder levels, and a single-read TLS metadata adapter. No exploitation,
-  brute force, NSE scripts, or automatic remediation.
+- **Real Recon adapters**: a two-stage Nmap adapter (bounded discovery, then
+  service/vulnerability scripts only on open ports), a passive
+  certificate-transparency Subfinder adapter, and a single-read TLS metadata
+  adapter. No exploitation, brute force, or automatic remediation. The Nmap NSE
+  `vuln` scripts are detection-only and run against the fixed high-value port
+  list.
 - **Explicit authorization**: the BFF requires an operator acknowledgement for
-  scope and scan creation. High and Deep profiles additionally require a DNS TXT
-  ownership challenge and an `isolated_lab` scope. Normal and Medium are bounded
-  and do not require DNS TXT, but can opt into the same blue DNS TXT check. Scans
-  can only use targets and profiles in an approved, time-bounded scope.
+  scope and scan creation. The operator console exposes four fixed services
+  (Nmap, Subfinder, TLS Metadata, Synthetic Inventory) with no elevated level
+  selector. The legacy High/Deep API path retains its DNS TXT ownership
+  challenge and `isolated_lab` scope. Scans can only use targets and profiles in
+  an approved, time-bounded scope.
 - **Auth/RBAC**: opaque session cookie, per-session CSRF token, ordered
   `viewer < operator < admin` roles, login rate limiting, database-backed
   lockout, TOTP MFA, optional OIDC, password reset, session inventory and
@@ -59,12 +63,13 @@ missing core logic.
   databases), 61 BFF tests, 6 frontend tests, frontend type-check, production
   build, dependency audit, SBOM generation, runtime security smoke, and a
   smoke-level load test passed at this baseline.
-- **New profile selection**: the Targets console lets the operator select Nmap,
-  Subfinder, TLS, and synthetic inventory. Nmap and Subfinder each have their
-  own Normal/Medium/High/Deep dropdown inside the profile card. It queues one
-  scan per selected profile and combines the results. The default is Nmap +
-  Subfinder at Normal when both adapters are installed. The blue DNS TXT check
-  is required for High/Deep and optional for Normal/Medium.
+- **New service selection**: the ZeroTrace console exposes four toggle buttons
+  for Nmap, Subfinder, TLS Metadata, and Synthetic Inventory. All four are
+  selected by default. There are no level dropdowns; the engine runs only the
+  selected services, in fixed priority order (Nmap, Subfinder, TLS Metadata,
+  Synthetic Inventory). Nmap uses the bounded two-stage script flow; Subfinder
+  uses passive certificate-transparency records and performs no target DNS or
+  HTTP probe.
 
 ## 3. What is still demo-grade
 
@@ -91,15 +96,17 @@ missing core logic.
    - Egress allowlist proof and a real VPS/Supabase deployment remain open.
 
 4. **Scanner safety and capacity** — **implemented, with sandbox caveats**
-   - Four bounded levels, queue depth, per-target cooldown, concurrency limit,
+   - Four bounded services, queue depth, per-target cooldown, concurrency limit,
      retries, cancellation, hard timeouts, and output caps exist.
    - Runtime scanner version verification, an explicit target allow/deny policy,
      and scheduled-scope revalidation exist. See `docs/SCHEDULES.md`.
    - The container is hardened, but there is no per-scan network namespace or
      separate filesystem jail beyond the container controls.
-   - Normal and Medium are bounded and require the BFF acknowledgement. High and
-     Deep require DNS TXT ownership verification. No level enables exploitation,
-     brute force, NSE scripts, or automatic remediation.
+   - The operator UI uses the four fixed services and requires the BFF
+     acknowledgement. The legacy elevated-profile API path retains DNS TXT
+     ownership verification. No service enables exploitation, brute force, or
+     automatic remediation; Nmap's detection-only `vuln` scripts run only on open
+     ports.
 
 5. **Backups and disaster recovery** — **implemented locally, production drill open**
    - Encrypted backups, retention, a destructive restore drill, RPO/RTO targets,

@@ -2,8 +2,8 @@ import { expect, test, type Route } from "@playwright/test";
 import { expectConsole, signIn } from "./helpers";
 
 const profiles = [
-  "service_inventory_normal_v1",
-  "passive_subdomain_normal_v1",
+  "service_inventory_v1",
+  "passive_subdomain_v1",
   "tls_metadata_v1",
   "synthetic_inventory_v1",
 ];
@@ -25,7 +25,7 @@ const record = {
       scanId: "scan-nmap",
       scopeId: scope.scopeId,
       target: "lab.example.test",
-      profileId: "service_inventory_normal_v1",
+      profileId: "service_inventory_v1",
       state: "completed",
       assets: ["lab.example.test"],
       services: [
@@ -45,7 +45,7 @@ const record = {
       scanId: "scan-subfinder",
       scopeId: scope.scopeId,
       target: "lab.example.test",
-      profileId: "passive_subdomain_normal_v1",
+      profileId: "passive_subdomain_v1",
       state: "completed",
       assets: ["www.lab.example.test"],
       services: [],
@@ -111,6 +111,7 @@ async function json(route: Route, body: unknown, status = 200) {
 
 test("ZeroTrace run feeds Trace Recon and Intel Guard correlation", async ({ page }) => {
   let scansStarted = false;
+  const startedProfiles: string[] = [];
 
   await page.route("**/api/v1/engine/status", (route) => json(route, {
     service: "zerotrace-engine",
@@ -160,6 +161,7 @@ test("ZeroTrace run feeds Trace Recon and Intel Guard correlation", async ({ pag
   await page.route("**/api/v1/engine/scans", (route) => {
     const body = route.request().postDataJSON() as { profileId: string };
     scansStarted = true;
+    startedProfiles.push(body.profileId);
     return json(route, {
       scanId: `scan-${body.profileId}`,
       state: "queued",
@@ -179,9 +181,16 @@ test("ZeroTrace run feeds Trace Recon and Intel Guard correlation", async ({ pag
   await signIn(page);
   await expectConsole(page);
   await expect(page.getByLabel("Target")).toContainText("lab.example.test");
+  const serviceGroup = page.getByRole("group", { name: "Recon services" });
+  await expect(serviceGroup).toBeVisible();
+  await expect(serviceGroup.getByRole("button", { name: /Nmap/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(serviceGroup.getByRole("button", { name: /Subfinder/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(serviceGroup.getByRole("button", { name: /TLS Metadata/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(serviceGroup.getByRole("button", { name: /Synthetic Inventory/ })).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: /Run lab\.example\.test/ }).click();
   await expect(page.getByText(/Recon finished/)).toBeVisible({ timeout: 25_000 });
+  expect(startedProfiles).toEqual(profiles);
 
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
   await navigation.getByRole("link", { name: /Trace Recon/ }).click();

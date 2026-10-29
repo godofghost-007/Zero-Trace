@@ -18,6 +18,7 @@ import { useApiResource } from "@/lib/api";
 import { useSelectedTarget } from "@/lib/selectedTarget";
 import {
   PROFILE_SHORT_LABELS,
+  RECON_SERVICE_LABELS,
   scanTone,
   takeoverSignal,
   type EngineStatus,
@@ -132,7 +133,7 @@ export default function Recon() {
         <div className="empty-console">
           <Crosshair size={22} />
           <b>Trace Recon is waiting for a target</b>
-          <p>ZeroTrace writes the selected target, scope, and scan levels into the shared session state.</p>
+          <p>ZeroTrace writes the selected target, scope, and services into the shared session state.</p>
           <Link href="/" className="button button-primary">Open ZeroTrace <ArrowRight size={15} /></Link>
         </div>
       </Panel>
@@ -142,7 +143,7 @@ export default function Recon() {
           <ShieldCheck size={18} />
           <span>
             <b>{selection.target} · {selection.scopeId}</b>
-            <small>Nmap {selection.nmapLevel} · Subfinder {selection.subfinderLevel}. The pipeline reads the latest persisted record for each profile.</small>
+            <small>{selection.services.map((serviceId) => RECON_SERVICE_LABELS[serviceId]).join(" → ")}. The pipeline reads the latest persisted record for each profile.</small>
           </span>
           <CodeLabel>LOOPBACK ENGINE</CodeLabel>
         </div>

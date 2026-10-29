@@ -4,8 +4,10 @@ from uuid import uuid4
 
 from app.recon import (
     AdapterResult,
+    CtLogSubfinderAdapter,
     InMemoryReconRepository,
     NmapAdapter,
+    NmapScriptAdapter,
     PROFILES,
     ReconEngine,
     ReconError,
@@ -315,6 +317,90 @@ class ReconAdapterTests(unittest.TestCase):
             result.services,
             (("lab.example.test", "tcp", 443, "nginx", "1.24.0"),),
         )
+
+    def test_nmap_script_adapter_discovers_then_scans_only_open_ports(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        class Runner:
+            def run(self, args: tuple[str, ...], timeout_seconds: int, max_output_bytes: int) -> bytes:
+                calls.append(args)
+                if len(calls) == 1:
+                    return (
+                        b"<nmaprun><host><ports><port protocol='tcp' portid='443'>"
+                        b"<state state='open'/><service name='https'/></port>"
+                        b"<port protocol='tcp' portid='22'><state state='closed'/>"
+                        b"</port></ports></host></nmaprun>"
+                    )
+                return (
+                    b"<nmaprun><host><ports><port protocol='tcp' portid='443'>"
+                    b"<state state='open'/><service name='http' product='nginx' version='1.25'/>"
+                    b"</port></ports></host></nmaprun>"
+                )
+
+        result = NmapScriptAdapter("nmap", Runner()).run(
+            target(), PROFILES["service_inventory_v1"]
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("-Pn", calls[0])
+        self.assertIn("--min-rate", calls[0])
+        self.assertIn("--open", calls[0])
+        self.assertIn("--version-light", calls[1])
+        self.assertIn("--script-timeout", calls[1])
+        self.assertEqual(calls[1][calls[1].index("-p") + 1], "443")
+        self.assertEqual(
+            result.services,
+            (("lab.example.test", "tcp", 443, "nginx", "1.25"),),
+        )
+
+    def test_nmap_script_adapter_skips_deep_scan_when_no_ports_are_open(self) -> None:
+        calls: list[tuple[str, ...]] = []
+
+        class Runner:
+            def run(self, args: tuple[str, ...], timeout_seconds: int, max_output_bytes: int) -> bytes:
+                calls.append(args)
+                return b"<nmaprun><host><ports/></host></nmaprun>"
+
+        result = NmapScriptAdapter("nmap", Runner()).run(
+            target(), PROFILES["service_inventory_v1"]
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result.state, ReconRunState.PARTIAL)
+        self.assertEqual(
+            result.warnings, ("no open ports observed / may be filtered",)
+        )
+
+    def test_ct_log_subfinder_is_passive_and_deduplicates_records(self) -> None:
+        calls: list[tuple[str, int, int]] = []
+
+        def fetcher(domain: str, timeout_seconds: int, max_output_bytes: int) -> bytes:
+            calls.append((domain, timeout_seconds, max_output_bytes))
+            return (
+                b'[{"name_value":"www.lab.example.test\\n'
+                b'*.api.lab.example.test\\nnotlab.example.test"}]'
+            )
+
+        result = CtLogSubfinderAdapter(fetcher, retries=1).run(
+            target(), PROFILES["passive_subdomain_v1"]
+        )
+
+        self.assertEqual(calls[0][0], "lab.example.test")
+        self.assertEqual(
+            result.assets, ("api.lab.example.test", "www.lab.example.test")
+        )
+        self.assertEqual(result.state, ReconRunState.COMPLETED)
+
+    def test_ct_log_subfinder_reports_source_failure_as_partial(self) -> None:
+        def fetcher(domain: str, timeout_seconds: int, max_output_bytes: int) -> bytes:
+            raise OSError("offline")
+
+        result = CtLogSubfinderAdapter(fetcher, retries=1).run(
+            target(), PROFILES["passive_subdomain_v1"]
+        )
+
+        self.assertEqual(result.state, ReconRunState.PARTIAL)
+        self.assertEqual(result.warnings, ("passive source unavailable",))
 
     def test_subfinder_levels_escalate_from_normal_to_deep(self) -> None:
         calls: list[tuple[str, ...]] = []

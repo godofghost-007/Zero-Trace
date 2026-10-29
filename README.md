@@ -175,24 +175,28 @@ readiness snapshots survive an engine restart.
 - No exploitation, brute force, credential attack, or automatic remediation is
   implemented.
 
-## Scan levels
+## Recon services
 
-Nmap and Subfinder each have their own scan-level dropdown inside the profile
-card. Normal is the default for both. The BFF still requires `authorized: true`
-for every scope and scan. High and Deep also require the blue DNS TXT ownership
-check and an `isolated_lab` scope. Normal and Medium may use the same blue check
-optionally; leaving it unchecked keeps the scope synthetic and bounded.
+ZeroTrace exposes four service toggle buttons: Nmap, Subfinder, TLS Metadata,
+and Synthetic Inventory. All four are selected by default. There are no scan
+level dropdowns. The BFF still requires `authorized: true` for every scope and
+scan, and the engine runs only the selected services in fixed priority order.
 
-| Level | Nmap | Subfinder | DNS TXT |
-|---|---|---|---|
-| Normal | `nmap -sT --top-ports 100 -oX - <target>` | `subfinder -d <domain> -silent -json` | No |
-| Medium | `nmap -sT -sV --top-ports 1000 -oX - <target>` | `subfinder -d <domain> -all -silent -json` | No |
-| High | `nmap -sT -sV -p- --version-light -oX - <target>` | `subfinder -d <domain> -all -recursive -silent -json` | Yes |
-| Deep | `nmap -sT -sV -p- --version-all -oX - <target>` | `subfinder -d <domain> -all -recursive -timeout 60 -max-time 12 -silent -json` | Yes |
+| Priority | Service | Execution |
+|---|---|---|
+| 1 | Nmap | Bounded discovery on the fixed high-value port list, then `-sV --version-light --script vuln` only on ports that were open |
+| 2 | Subfinder | Passive certificate-transparency records from crt.sh; no target DNS or HTTP probe |
+| 3 | TLS Metadata | One bounded certificate read on port 443 |
+| 4 | Synthetic Inventory | Local fixture inventory, no network |
 
-`ZEROTRACE_NMAP_PORTS` overrides the port list only for Normal and Medium. High
-and Deep always scan all TCP ports. High and Deep are slower, more visible, and
-must only run against targets you own or are explicitly authorized to test.
+The legacy High/Deep API profiles remain available for compatibility and still
+require DNS TXT ownership verification plus an `isolated_lab` scope. The operator
+console does not expose them.
+
+`ZEROTRACE_NMAP_PORTS` overrides the fixed high-value port list used by the Nmap
+service. The legacy High/Deep API profiles always scan all TCP ports, are slower
+and more visible, and must only run against targets you own or are explicitly
+authorized to test.
 
 ## Verification
 

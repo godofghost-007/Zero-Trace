@@ -243,79 +243,78 @@ export const TERMINAL_SCAN_STATES = new Set([
   "cancelled",
 ]);
 
-export type ScanLevel = "normal" | "medium" | "high" | "deep";
+export type ReconServiceId = "nmap" | "subfinder" | "tls" | "synthetic";
 
-export type ScanLevelDefinition = {
-  id: ScanLevel;
+export type ReconServiceDefinition = {
+  id: ReconServiceId;
   label: string;
-  nmap: string;
-  subfinder: string;
-  requiresAuthorization: boolean;
+  priority: number;
+  profileId: string;
+  description: string;
 };
 
-export const SCAN_LEVELS: ScanLevelDefinition[] = [
+// Array order is execution priority. Keep this as the single source of truth
+// for both the selection buttons and the profile order sent to the engine.
+export const RECON_SERVICES: ReconServiceDefinition[] = [
   {
-    id: "normal",
-    label: "Normal",
-    nmap: "Top 100 TCP ports",
-    subfinder: "Default passive sources",
-    requiresAuthorization: false,
+    id: "nmap",
+    label: "Nmap",
+    priority: 1,
+    profileId: "service_inventory_v1",
+    description: "Two-stage service and vulnerability scan",
   },
   {
-    id: "medium",
-    label: "Medium",
-    nmap: "Top 1,000 ports + versions",
-    subfinder: "All passive sources",
-    requiresAuthorization: false,
+    id: "subfinder",
+    label: "Subfinder",
+    priority: 2,
+    profileId: "passive_subdomain_v1",
+    description: "Passive certificate-transparency discovery",
   },
   {
-    id: "high",
-    label: "High",
-    nmap: "All TCP ports + light versions",
-    subfinder: "Recursive passive sources",
-    requiresAuthorization: true,
+    id: "tls",
+    label: "TLS Metadata",
+    priority: 3,
+    profileId: "tls_metadata_v1",
+    description: "One bounded certificate read on port 443",
   },
   {
-    id: "deep",
-    label: "Deep",
-    nmap: "All TCP ports + full versions",
-    subfinder: "Recursive sources, longer collection",
-    requiresAuthorization: true,
+    id: "synthetic",
+    label: "Synthetic Inventory",
+    priority: 4,
+    profileId: "synthetic_inventory_v1",
+    description: "Local fixture inventory, no network",
   },
 ];
 
-export const LEVEL_PROFILE_IDS: Record<
-  "nmap" | "subfinder",
-  Record<ScanLevel, string>
-> = {
-  nmap: {
-    normal: "service_inventory_normal_v1",
-    medium: "service_inventory_medium_v1",
-    high: "service_inventory_high_v1",
-    deep: "service_inventory_deep_v1",
-  },
-  subfinder: {
-    normal: "passive_subdomain_normal_v1",
-    medium: "passive_subdomain_medium_v1",
-    high: "passive_subdomain_high_v1",
-    deep: "passive_subdomain_deep_v1",
-  },
+export const DEFAULT_RECON_SERVICES: ReconServiceId[] = RECON_SERVICES.map(
+  (service) => service.id,
+);
+
+export const RECON_SERVICE_LABELS: Record<ReconServiceId, string> = {
+  nmap: "Nmap",
+  subfinder: "Subfinder",
+  tls: "TLS Metadata",
+  synthetic: "Synthetic Inventory",
 };
 
-export function scanLevelRequiresAuthorization(level: ScanLevel): boolean {
-  return level === "high" || level === "deep";
+export function profileIdsForServices(
+  services: readonly ReconServiceId[],
+): string[] {
+  return RECON_SERVICES.filter((service) => services.includes(service.id)).map(
+    (service) => service.profileId,
+  );
 }
 
 export function profileTimeoutSeconds(profileId: string): number {
   const timeouts: Record<string, number> = {
     synthetic_inventory_v1: 60,
     tls_metadata_v1: 30,
-    service_inventory_v1: 300,
+    service_inventory_v1: 900,
     service_inventory_normal_v1: 300,
     service_inventory_medium_v1: 600,
     service_inventory_high_v1: 900,
     service_inventory_deep_v1: 1800,
-    passive_subdomain_v1: 300,
+    passive_subdomain_v1: 180,
     passive_subdomain_normal_v1: 300,
     passive_subdomain_medium_v1: 600,
     passive_subdomain_high_v1: 900,
@@ -327,8 +326,8 @@ export function profileTimeoutSeconds(profileId: string): number {
 export const PROFILE_LABELS: Record<string, string> = {
   tls_metadata_v1: "TLS metadata — one real read on port 443",
   synthetic_inventory_v1: "Synthetic inventory — fixture, no network",
-  service_inventory_v1: "Nmap service scan — choose a level in this card",
-  passive_subdomain_v1: "Subfinder — choose a level in this card",
+  service_inventory_v1: "Nmap — two-stage discovery, service and vulnerability scan",
+  passive_subdomain_v1: "Subfinder — passive certificate-transparency discovery",
   service_inventory_normal_v1: "Nmap normal — top 100 TCP ports",
   service_inventory_medium_v1: "Nmap medium — top 1,000 ports + versions",
   service_inventory_high_v1: "Nmap high — all TCP ports + light versions",
@@ -342,8 +341,8 @@ export const PROFILE_LABELS: Record<string, string> = {
 export const PROFILE_SHORT_LABELS: Record<string, string> = {
   tls_metadata_v1: "TLS metadata",
   synthetic_inventory_v1: "Synthetic inventory",
-  service_inventory_v1: "Nmap service scan",
-  passive_subdomain_v1: "Subfinder passive",
+  service_inventory_v1: "Nmap",
+  passive_subdomain_v1: "Subfinder",
   service_inventory_normal_v1: "Nmap normal",
   service_inventory_medium_v1: "Nmap medium",
   service_inventory_high_v1: "Nmap high",

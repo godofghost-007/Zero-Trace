@@ -888,5 +888,5 @@ Use these when the guide wants proof rather than a screen:
 - [ ] Credential file not shown on the projector
 - [ ] Evidence folder open as a fallback
 - [ ] Completion scorecard ready: **~90% demo / ~60% production**
-- [ ] Normal/Medium described as bounded; High/Deep described as requiring DNS TXT
+- [ ] Four services described; execution order is Nmap, Subfinder, TLS Metadata, Synthetic Inventory
 - [ ] No exploitation, brute force, or automatic remediation promised

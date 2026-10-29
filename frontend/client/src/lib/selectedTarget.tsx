@@ -6,14 +6,17 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { ScanLevel } from "@/lib/liveEngine";
+import {
+  DEFAULT_RECON_SERVICES,
+  RECON_SERVICES,
+  type ReconServiceId,
+} from "@/lib/liveEngine";
 
 export type SelectedTarget = {
   target: string;
   scopeId: string;
   profiles: string[];
-  nmapLevel: ScanLevel;
-  subfinderLevel: ScanLevel;
+  services: ReconServiceId[];
   selectedAt: string;
 };
 
@@ -26,6 +29,7 @@ type SelectedTargetContextValue = {
 };
 
 const STORAGE_KEY = "zerotrace.selectedTarget.v1";
+const SERVICE_IDS = new Set<ReconServiceId>(RECON_SERVICES.map((service) => service.id));
 
 function loadSelection(): SelectedTarget | null {
   try {
@@ -39,17 +43,33 @@ function loadSelection(): SelectedTarget | null {
     ) {
       return null;
     }
+    const profiles = parsed.profiles.filter(
+      (item): item is string => typeof item === "string",
+    );
+    let services: ReconServiceId[] = [];
+    if (Array.isArray(parsed.services)) {
+      services = parsed.services.filter(
+        (item): item is ReconServiceId =>
+          typeof item === "string" && SERVICE_IDS.has(item as ReconServiceId),
+      );
+    }
+    if (services.length === 0) {
+      const profileSet = new Set(profiles);
+      services = RECON_SERVICES.filter((service) =>
+        profileSet.has(service.profileId),
+      ).map((service) => service.id);
+    }
+    if (services.length === 0) {
+      services = [...DEFAULT_RECON_SERVICES];
+    }
     return {
       target: parsed.target,
       scopeId: parsed.scopeId,
-      profiles: parsed.profiles.filter((item): item is string => typeof item === "string"),
-      nmapLevel: parsed.nmapLevel === "medium" || parsed.nmapLevel === "high" || parsed.nmapLevel === "deep"
-        ? parsed.nmapLevel
-        : "normal",
-      subfinderLevel: parsed.subfinderLevel === "medium" || parsed.subfinderLevel === "high" || parsed.subfinderLevel === "deep"
-        ? parsed.subfinderLevel
-        : "normal",
-      selectedAt: typeof parsed.selectedAt === "string" ? parsed.selectedAt : new Date().toISOString(),
+      profiles,
+      services,
+      selectedAt: typeof parsed.selectedAt === "string"
+        ? parsed.selectedAt
+        : new Date().toISOString(),
     };
   } catch {
     return null;

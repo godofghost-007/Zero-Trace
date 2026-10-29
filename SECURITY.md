@@ -27,9 +27,10 @@ ZeroTrace's scanning boundary does not authorize third-party targets.
 - The engine binds to loopback. The BFF is the only public application.
 - Guard is inspect-only by default. The optional upstream gateway must use an
   allowlisted OpenAI-compatible base URL.
-- Scanning is limited to approved, time-bounded scopes. High/Deep profiles
-  require DNS TXT ownership verification. No exploitation, brute force, NSE
-  scripts, or automatic remediation is supported.
+- Scanning is limited to approved, time-bounded scopes and the four fixed
+  operator services. The legacy High/Deep API profiles require DNS TXT ownership
+  verification. No exploitation, brute force, or automatic remediation is
+  supported; Nmap's detection-only `vuln` scripts run only on open ports.
 - Production startup fails closed when the secret key, PostgreSQL URL, secure
   cookies, MFA key, schema auto-creation, demo mode, or OIDC configuration is
   unsafe.

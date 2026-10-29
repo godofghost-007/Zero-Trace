@@ -68,13 +68,13 @@ from app.observability import (  # noqa: E402
 )
 from app.recon import (  # noqa: E402
     AdapterResult,
+    CtLogSubfinderAdapter,
     InMemoryReconRepository,
-    NmapAdapter,
+    NmapScriptAdapter,
     NormalizedService,
     PROFILES,
     ReconEngine,
     ReconError,
-    SubfinderAdapter,
     SubprocessRunner,
     SyntheticAdapter,
     TLSAdapter,
@@ -481,14 +481,15 @@ def _configured_adapters(settings: EngineSettings | None = None) -> dict[str, ob
     runner = SubprocessRunner()
     nmap = shutil.which("nmap")
     if nmap:
-        nmap_adapter = NmapAdapter(nmap, runner, ports=settings.nmap_ports)
-        adapters["service_inventory_v1"] = nmap_adapter
-        adapters["nmap"] = nmap_adapter
-    subfinder = shutil.which("subfinder")
-    if subfinder:
-        subfinder_adapter = SubfinderAdapter(subfinder, runner)
-        adapters["passive_subdomain_v1"] = subfinder_adapter
-        adapters["subfinder"] = subfinder_adapter
+        # Two-stage discovery + focused service/vuln scan, adapted from the
+        # operator-provided nmap.py script.
+        adapters["service_inventory_v1"] = NmapScriptAdapter(
+            nmap, runner, ports=settings.nmap_ports
+        )
+    # Subfinder uses the passive certificate-transparency path from the
+    # operator-provided subfinder.py script. No active DNS or target HTTP probe
+    # is performed, so the subfinder binary is not required for this adapter.
+    adapters["passive_subdomain_v1"] = CtLogSubfinderAdapter()
     return adapters
 
 
